@@ -1,4 +1,4 @@
-import sys, os, subprocess, json, urllib.request, urllib.parse, re, sqlite3, time, signal
+import sys, os, subprocess, json, urllib.request, urllib.parse, re, sqlite3, time, signal, html
 
 # Load server configuration from external JSON or environment variables
 CONFIG_PATH = os.path.expanduser('~/spotdl/server_config.json')
@@ -220,50 +220,123 @@ def list_users():
 
     print(json.dumps({'users': user_list}))
 
+def resolve_song_file(sn):
+    """
+    Given a song string from spotDL (e.g. 'Cannons - Fire for You' or 'Hayden James - NUMB'
+    or 'Isaac Dunbar - scorton\'s creek - re-imagined by filous'),
+    find the actual audio file on disk and return its Jellyfin path '/media/music/...'.
+    """
+    clean_sn = re.sub(r'\(feat\.[^\)]+\)', '', sn, flags=re.IGNORECASE)
+    clean_sn = re.sub(r'\(with[^\)]+\)', '', clean_sn, flags=re.IGNORECASE).strip()
+    parts = clean_sn.split(' - ')
+    artist = parts[0].strip() if len(parts) >= 2 else ''
+    title = ' - '.join(parts[1:]).strip() if len(parts) >= 2 else clean_sn
+    short_title = title.split(' - ')[0].strip()
+
+    # 1. Search disk directly under artist folder
+    if artist and os.path.exists(MUSIC_DIR):
+        try:
+            for d in os.listdir(MUSIC_DIR):
+                if d.lower() == artist.lower():
+                    artist_dir = os.path.join(MUSIC_DIR, d)
+                    for root, _, files in os.walk(artist_dir):
+                        for f in files:
+                            if f.endswith(('.mp3', '.flac', '.m4a', '.opus')) and short_title.lower() in f.lower():
+                                full_p = os.path.join(root, f)
+                                return full_p.replace(MUSIC_DIR, '/media/music')
+        except Exception:
+            pass
+
+    # 2. Search entire MUSIC_DIR if not found in artist folder
+    if short_title and os.path.exists(MUSIC_DIR):
+        try:
+            for root, _, files in os.walk(MUSIC_DIR):
+                for f in files:
+                    if f.endswith(('.mp3', '.flac', '.m4a', '.opus')) and short_title.lower() in f.lower():
+                        if not artist or artist.lower() in root.lower():
+                            full_p = os.path.join(root, f)
+                            return full_p.replace(MUSIC_DIR, '/media/music')
+        except Exception:
+            pass
+
+    return None
+
 def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is_shared=False):
-    log(f"LOG: 🔗 Synchronizing playlist '{playlist_name}' to Jellyfin API...")
+    log(f"LOG: 🔗 Synchronizing playlist '{playlist_name}' ({len(downloaded_song_names)} tracks) to Jellyfin...")
     
+    # 1. Trigger Jellyfin library scan so newly downloaded tracks are registered
     try:
         req = urllib.request.Request(f"{JELLYFIN_URL}/Items/{MUSIC_FOLDER_ID}/Refresh?api_key={JELLYFIN_TOKEN}", method="POST")
         urllib.request.urlopen(req, timeout=5)
     except Exception:
         pass
 
+    # 2. Resolve every song to its exact Jellyfin path on disk
+    resolved_paths = []
+    for sn in downloaded_song_names:
+        p = resolve_song_file(sn)
+        if p and p not in resolved_paths:
+            resolved_paths.append(p)
+        elif not p:
+            log(f"LOG: ⚠️ Track not yet matched on disk: {sn}")
+
+    log(f"LOG: 📁 Matched {len(resolved_paths)} / {len(downloaded_song_names)} audio files on storage disk.")
+
+    # 3. Resolve Jellyfin BaseItem IDs from Path with retry polling (waiting for background scanner)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     item_ids = []
-    if downloaded_song_names:
-        for sn in downloaded_song_names:
-            clean_sn = os.path.basename(sn).replace('.mp3', '')
-            parts = clean_sn.split(' - ')
-            search_title = parts[-1].strip() if parts else clean_sn
+    missing_paths = list(resolved_paths)
 
-            cur.execute("SELECT Id FROM BaseItems WHERE MediaType = 'Audio' AND Name LIKE ? ORDER BY DateCreated DESC LIMIT 1", ('%' + search_title + '%',))
+    for attempt in range(6):
+        still_missing = []
+        for p in missing_paths:
+            cur.execute("SELECT Id FROM BaseItems WHERE MediaType = 'Audio' AND Path = ?", (p,))
             row = cur.fetchone()
-            if not row:
-                cur.execute("SELECT Id FROM BaseItems WHERE MediaType = 'Audio' AND Path LIKE ? ORDER BY DateCreated DESC LIMIT 1", ('%' + search_title + '%',))
-                row = cur.fetchone()
-
             if row:
                 cid = row[0].replace('-', '').lower()
                 if cid not in item_ids:
                     item_ids.append(cid)
+            else:
+                still_missing.append(p)
 
-    if not item_ids:
-        log("LOG: ⚠️ No new track item IDs resolved for playlist linking.")
+        if not still_missing:
+            break
+
+        if attempt < 5:
+            time.sleep(2)
+            conn.close()
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            missing_paths = still_missing
+
+    log(f"LOG: 🆔 Resolved {len(item_ids)} / {len(resolved_paths)} Jellyfin item IDs.")
+
+    if not item_ids and not resolved_paths:
+        log("LOG: ⚠️ No track paths or item IDs resolved for playlist linking.")
         return
-
-    cur.execute("SELECT Id FROM BaseItems WHERE Type = 'MediaBrowser.Controller.Playlists.Playlist' AND Name = ?", (playlist_name,))
-    existing = cur.fetchone()
 
     target_owner = '00000000000000000000000000000000' if is_shared else (owner_id or '')
 
-    if existing:
-        playlist_id = existing[0].replace('-', '').lower()
-        log(f"LOG: 📌 Appending {len(item_ids)} tracks to existing playlist '{playlist_name}' ({playlist_id})...")
+    # 4. Check if playlist exists in Jellyfin
+    existing_playlist_id = None
+    try:
+        user_param = target_owner if target_owner != '00000000000000000000000000000000' else (owner_id or '')
+        req = urllib.request.Request(f"{JELLYFIN_URL}/Users/{user_param}/Items?includeItemTypes=Playlist&recursive=true&api_key={JELLYFIN_TOKEN}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            pl_data = json.loads(resp.read())
+            for pl_item in pl_data.get('Items', []):
+                if pl_item.get('Name', '').lower() == playlist_name.lower():
+                    existing_playlist_id = pl_item.get('Id')
+                    break
+    except Exception:
+        pass
+
+    if existing_playlist_id and item_ids:
+        log(f"LOG: 📌 Appending {len(item_ids)} tracks to existing playlist '{playlist_name}' ({existing_playlist_id})...")
         ids_param = ','.join(item_ids)
-        url = f"{JELLYFIN_URL}/Playlists/{playlist_id}/Items?ids={ids_param}&userId={target_owner}"
+        url = f"{JELLYFIN_URL}/Playlists/{existing_playlist_id}/Items?ids={ids_param}&userId={target_owner}"
         req = urllib.request.Request(url, method="POST")
         req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
         try:
@@ -271,7 +344,7 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
                 log(f"LOG: 🔒 Appended {len(item_ids)} tracks to '{playlist_name}' successfully!")
         except Exception as e:
             log(f"LOG: ⚠️ Playlist append note: {e}")
-    else:
+    elif item_ids:
         log(f"LOG: 🆕 Creating fresh playlist '{playlist_name}' with {len(item_ids)} tracks...")
         ids_param = ','.join(item_ids)
         url = f"{JELLYFIN_URL}/Playlists?name={urllib.parse.quote(playlist_name)}&ids={ids_param}&userId={target_owner}&mediaType=Audio"
@@ -285,25 +358,41 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
         except Exception as e:
             log(f"LOG: ⚠️ Playlist creation note: {e}")
 
-    if is_shared:
-        try:
-            xml_file = os.path.join(PLAYLISTS_DIR, playlist_name, 'playlist.xml')
-            if os.path.exists(xml_file):
-                with open(xml_file, 'r', encoding='utf-8') as f:
-                    xml_content = f.read()
-                xml_content = re.sub(r'<OwnerUserId>[^<]+</OwnerUserId>', '<OwnerUserId>00000000000000000000000000000000</OwnerUserId>', xml_content)
-                with open(xml_file, 'w', encoding='utf-8') as f:
-                    f.write(xml_content)
-                log(f"LOG: 👥 Playlist '{playlist_name}' unlocked for all household users!")
-        except Exception as e:
-            log(f"LOG: ⚠️ Shared playlist config note: {e}")
+    # 5. Direct verification and repair of playlist.xml on disk
+    try:
+        pl_dir = os.path.join(PLAYLISTS_DIR, playlist_name)
+        xml_file = os.path.join(pl_dir, 'playlist.xml')
+        if os.path.exists(xml_file):
+            with open(xml_file, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
 
+            existing_paths_in_xml = set(re.findall(r'<Path>([^<]+)</Path>', xml_content))
+            paths_to_add = [p for p in resolved_paths if p not in existing_paths_in_xml]
+
+            if paths_to_add:
+                new_items_xml = "".join(f"\n    <PlaylistItem>\n      <Path>{html.escape(p)}</Path>\n    </PlaylistItem>" for p in paths_to_add)
+                if '<PlaylistItems>' in xml_content:
+                    xml_content = xml_content.replace('</PlaylistItems>', f"{new_items_xml}\n  </PlaylistItems>")
+                else:
+                    xml_content = xml_content.replace('</Item>', f"  <PlaylistItems>{new_items_xml}\n  </PlaylistItems>\n</Item>")
+
+            if is_shared:
+                xml_content = re.sub(r'<OwnerUserId>[^<]+</OwnerUserId>', '<OwnerUserId>00000000000000000000000000000000</OwnerUserId>', xml_content)
+
+            with open(xml_file, 'w', encoding='utf-8') as f:
+                f.write(xml_content)
+            log(f"LOG: 📄 Playlist file synchronized with {len(resolved_paths)} total tracks on disk.")
+    except Exception as e:
+        log(f"LOG: ⚠️ Playlist XML update note: {e}")
+
+    # Clean display names in BaseItems
     try:
         cur.execute("UPDATE BaseItems SET Name = SUBSTR(Name, 6) WHERE MediaType = 'Audio' AND Name GLOB '[0-9][0-9] - *'")
         conn.commit()
     except Exception:
         pass
 
+    # Refresh playlist library in Jellyfin
     try:
         req = urllib.request.Request(f"{JELLYFIN_URL}/Items/{PLAYLISTS_FOLDER_ID}/Refresh?api_key={JELLYFIN_TOKEN}", method="POST")
         urllib.request.urlopen(req, timeout=5)
@@ -319,6 +408,7 @@ def run_download(url, user_name, owner_id, song_action='none', song_playlist_nam
     cmd = [
         'docker', 'run', '--rm',
         '-e', 'HOME=/tmp',
+        '-e', 'COLUMNS=1000',
         '-v', '/mnt/media/music:/music',
         '-u', '1000:1000',
         'spotdl-custom:latest',
@@ -397,19 +487,23 @@ def run_download(url, user_name, owner_id, song_action='none', song_playlist_nam
                 log(f"LOG: 🎵 [{current_idx}/{total_tracks or '?'}] {song_name} (New #{downloaded_count})")
             continue
 
-        skip_m = re.search(r'Skipping\s+"?([^"(]+?)"?(?:\s+\(file already exists|\s+\(duplicate|\s*$)', line_str, re.IGNORECASE)
+        skip_m = re.search(r'^Skipping\s+"?(.+?)(?:\s+\(file already|\s+\(duplicate|\s*$)', line_str, re.IGNORECASE)
         if skip_m:
-            current_idx += 1
-            skipped_count += 1
-            song_name = skip_m.group(1).strip()
-            downloaded_tracks.append(song_name)
-            prog_pct = int((current_idx / max(total_tracks, 1)) * 100) if total_tracks else 50
-            log(f"PROGRESS: {prog_pct}|{current_idx}|{total_tracks}")
-            log(f"COUNTS: {skipped_count}|{downloaded_count}|{total_tracks}")
-            log(f"STATUS: ⏩ Skipped (In Library) [{current_idx}/{total_tracks or '?'}] {song_name}")
-            log(f"LOG: ⏩ [{current_idx}/{total_tracks or '?'}] {song_name} (Already in Library)")
-            update_state(running=True, user=user_name, title=detected_playlist_title or song_playlist_name or url, total=total_tracks, current=current_idx, skipped=skipped_count, downloaded=downloaded_count, track=song_name, status=f"⏩ Skipped (In Library) [{current_idx}/{total_tracks or '?'}] {song_name}", pct=prog_pct)
-            continue
+            raw_s = skip_m.group(1).strip()
+            raw_s = re.sub(r'\s+\(file.*$', '', raw_s)
+            raw_s = raw_s.rstrip('")').strip()
+            if raw_s:
+                current_idx += 1
+                skipped_count += 1
+                song_name = raw_s
+                downloaded_tracks.append(song_name)
+                prog_pct = int((current_idx / max(total_tracks, 1)) * 100) if total_tracks else 50
+                log(f"PROGRESS: {prog_pct}|{current_idx}|{total_tracks}")
+                log(f"COUNTS: {skipped_count}|{downloaded_count}|{total_tracks}")
+                log(f"STATUS: ⏩ Skipped (In Library) [{current_idx}/{total_tracks or '?'}] {song_name}")
+                log(f"LOG: ⏩ [{current_idx}/{total_tracks or '?'}] {song_name} (Already in Library)")
+                update_state(running=True, user=user_name, title=detected_playlist_title or song_playlist_name or url, total=total_tracks, current=current_idx, skipped=skipped_count, downloaded=downloaded_count, track=song_name, status=f"⏩ Skipped (In Library) [{current_idx}/{total_tracks or '?'}] {song_name}", pct=prog_pct)
+                continue
 
         search_m = re.search(r'Searching for "([^"]+)"', line_str)
         if search_m:
