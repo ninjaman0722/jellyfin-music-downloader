@@ -465,6 +465,7 @@ def run_download(url, user_name, owner_id, song_action='none', song_playlist_nam
 
     cmd = [
         'docker', 'run', '--rm',
+        '--ulimit', 'nofile=65536:65536',
         '-e', 'HOME=/tmp',
         '-e', 'COLUMNS=1000',
         '-v', '/mnt/media/music:/music',
