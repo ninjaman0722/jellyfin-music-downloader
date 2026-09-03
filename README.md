@@ -41,7 +41,7 @@ jellyfin-music-app/
 ### On Linux Mint / Ubuntu / Debian / Generic Linux
 1. Clone or copy this repository:
    ```bash
-   git clone <repo-url> ~/.config/omarchy/extensions/jellyfin-music-app
+   git clone https://github.com/ninjaman0722/jellyfin-music-downloader.git ~/.config/omarchy/extensions/jellyfin-music-app
    ```
 2. Run the 1-click installer:
    ```bash
