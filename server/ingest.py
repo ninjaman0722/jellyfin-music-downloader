@@ -376,40 +376,63 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
         if p not in existing_paths_in_xml and cid not in new_ids:
             new_ids.append(cid)
 
+    CHUNK_SIZE = 50
+    user_arg = f"&userId={owner_id}" if owner_id and owner_id != '00000000000000000000000000000000' else ""
+
     if existing_playlist_id:
         if new_ids:
             log(f"LOG: 📌 Appending {len(new_ids)} new tracks to existing playlist '{playlist_name}' ({existing_playlist_id})...")
-            ids_param = ','.join(new_ids)
-            user_arg = f"&userId={owner_id}" if owner_id and owner_id != '00000000000000000000000000000000' else ""
-            url = f"{JELLYFIN_URL}/Playlists/{existing_playlist_id}/Items?ids={ids_param}{user_arg}"
-            req = urllib.request.Request(url, method="POST")
-            req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
-            try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    log(f"LOG: 🔒 Appended {len(new_ids)} tracks to '{playlist_name}' successfully!")
-            except Exception as e:
-                log(f"LOG: ⚠️ Playlist append note: {e}")
+            for i in range(0, len(new_ids), CHUNK_SIZE):
+                chunk = new_ids[i:i+CHUNK_SIZE]
+                ids_param = ','.join(chunk)
+                url = f"{JELLYFIN_URL}/Playlists/{existing_playlist_id}/Items?ids={ids_param}{user_arg}"
+                req = urllib.request.Request(url, method="POST")
+                req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        pass
+                except Exception as e:
+                    log(f"LOG: ⚠️ Playlist append note: {e}")
+            log(f"LOG: 🔒 Appended {len(new_ids)} tracks to '{playlist_name}' successfully!")
         else:
             log(f"LOG: ✅ Playlist '{playlist_name}' is already up to date ({len(resolved_paths)} tracks).")
     elif item_ids:
         log(f"LOG: 🆕 Creating fresh playlist '{playlist_name}' with {len(item_ids)} tracks...")
-        ids_param = ','.join(item_ids)
-        user_arg = f"&userId={owner_id}" if owner_id and owner_id != '00000000000000000000000000000000' else ""
+        first_chunk = item_ids[:CHUNK_SIZE]
+        remaining_ids = item_ids[CHUNK_SIZE:]
+        ids_param = ','.join(first_chunk)
         url = f"{JELLYFIN_URL}/Playlists?name={urllib.parse.quote(playlist_name)}&ids={ids_param}{user_arg}&mediaType=Audio"
         req = urllib.request.Request(url, method="POST")
         req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
         req.add_header('Content-Type', 'application/json')
+        created_id = None
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 res = json.loads(resp.read())
-                log(f"LOG: 🔒 Created playlist '{playlist_name}' (ID: {res.get('Id')})!")
+                created_id = res.get('Id')
+                log(f"LOG: 🔒 Created playlist '{playlist_name}' (ID: {created_id})!")
         except Exception as e:
             log(f"LOG: ⚠️ Playlist creation note: {e}")
+
+        if created_id and remaining_ids:
+            for i in range(0, len(remaining_ids), CHUNK_SIZE):
+                chunk = remaining_ids[i:i+CHUNK_SIZE]
+                ids_param = ','.join(chunk)
+                url = f"{JELLYFIN_URL}/Playlists/{created_id}/Items?ids={ids_param}{user_arg}"
+                req = urllib.request.Request(url, method="POST")
+                req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        pass
+                except Exception as e:
+                    log(f"LOG: ⚠️ Playlist chunk append note: {e}")
+            log(f"LOG: 🔒 Appended remaining {len(remaining_ids)} tracks in chunks successfully!")
 
     # 5. Direct verification and repair of playlist.xml on disk
     try:
         pl_dir = os.path.join(PLAYLISTS_DIR, playlist_name)
         xml_file = os.path.join(pl_dir, 'playlist.xml')
+        os.makedirs(pl_dir, exist_ok=True)
         if os.path.exists(xml_file):
             with open(xml_file, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
@@ -440,6 +463,24 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
             with open(xml_file, 'w', encoding='utf-8') as f:
                 f.write(xml_content)
             log(f"LOG: 📄 Playlist file synchronized with {len(resolved_paths)} total tracks on disk.")
+        else:
+            new_items_xml = "".join(f"\n    <PlaylistItem>\n      <Path>{html.escape(p)}</Path>\n    </PlaylistItem>" for p in resolved_paths)
+            owner_val = '00000000000000000000000000000000' if is_shared else (owner_id or '')
+            xml_content = f"""<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Item>
+  <Added>{time.strftime('%Y-%m-%d %H:%M:%S')}</Added>
+  <LockData>false</LockData>
+  <LocalTitle>{html.escape(playlist_name)}</LocalTitle>
+  <RunningTime>0</RunningTime>
+  <Genres />
+  <OwnerUserId>{owner_val}</OwnerUserId>
+  <PlaylistMediaType>Audio</PlaylistMediaType>
+  <PlaylistItems>{new_items_xml}
+  </PlaylistItems>
+</Item>"""
+            with open(xml_file, 'w', encoding='utf-8') as f:
+                f.write(xml_content)
+            log(f"LOG: 📄 Created fresh playlist.xml with {len(resolved_paths)} tracks on disk.")
     except Exception as e:
         log(f"LOG: ⚠️ Playlist XML update note: {e}")
 
