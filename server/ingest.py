@@ -236,6 +236,18 @@ def match_filename_title(f_name, short_title, clean_title):
         return True
     return False
 
+def artist_matches(d_name, artist, clean_artist):
+    d_clean = sanitize_title(d_name).rstrip('.').lower()
+    art_lower = artist.lower()
+    cl_art_lower = clean_artist.lower()
+    if d_name.lower() == art_lower or d_clean == cl_art_lower:
+        return True
+    if d_name.lower().replace(' ', '') == art_lower.replace(' ', ''):
+        return True
+    if d_clean.replace(' ', '') == cl_art_lower.replace(' ', ''):
+        return True
+    return False
+
 def resolve_song_file(sn):
     """
     Given a song string from spotDL (e.g. 'Cannons - Fire for You' or 'Hayden James - NUMB'
@@ -249,12 +261,13 @@ def resolve_song_file(sn):
     title = ' - '.join(parts[1:]).strip() if len(parts) >= 2 else clean_sn
     short_title = title.split(' - ')[0].strip()
     clean_title = sanitize_title(short_title)
+    clean_artist = sanitize_title(artist).rstrip('.')
 
     # 1. Search disk directly under artist folder
     if artist and os.path.exists(MUSIC_DIR):
         try:
             for d in os.listdir(MUSIC_DIR):
-                if d.lower() == artist.lower() or d.lower().replace(' ', '') == artist.lower().replace(' ', ''):
+                if artist_matches(d, artist, clean_artist):
                     artist_dir = os.path.join(MUSIC_DIR, d)
                     for root, _, files in os.walk(artist_dir):
                         for f in files:
@@ -270,7 +283,7 @@ def resolve_song_file(sn):
             for root, _, files in os.walk(MUSIC_DIR):
                 for f in files:
                     if f.endswith(('.mp3', '.flac', '.m4a', '.opus')) and match_filename_title(f, short_title, clean_title):
-                        if not artist or artist.lower() in root.lower() or artist.lower().replace(' ', '') in root.lower().replace(' ', ''):
+                        if not artist or artist.lower() in root.lower() or clean_artist.lower() in root.lower():
                             full_p = os.path.join(root, f)
                             return full_p.replace(MUSIC_DIR, '/media/music')
         except Exception:
