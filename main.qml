@@ -146,6 +146,7 @@ PanelWindow {
     }
 
     function savePreferences() {
+        if (!root.currentUser || !root.currentUser.name || root.currentUser.name === "No User Selected") return;
         var data = {
             "user_name": root.currentUser.name,
             "song_action": root.songAction,
@@ -311,6 +312,19 @@ PanelWindow {
         root.statusMessage = "🔍 Resolving albums and tracklist...";
         root.logLines = [];
 
+        if ((!root.currentUser || !root.currentUser.id || root.currentUser.name === "No User Selected") && root.usersList && root.usersList.length > 0) {
+            var foundIdx = 0;
+            if (root.defaultUser) {
+                for (var u = 0; u < root.usersList.length; u++) {
+                    if (root.usersList[u].name.toLowerCase() === root.defaultUser.toLowerCase()) {
+                        foundIdx = u;
+                        break;
+                    }
+                }
+            }
+            root.selectedUserIndex = foundIdx;
+        }
+
         var songPl = "";
         if (root.songAction === "new_playlist") songPl = root.newPlaylistName.trim();
         else if (root.songAction === "existing_playlist") songPl = root.selectedExistingPlaylist;
@@ -326,7 +340,7 @@ PanelWindow {
         };
         root.savePreferences();
 
-        addLog("▶ Batch Ingest job started on xeondesktop for " + root.currentUser.name.toUpperCase());
+        addLog("▶ Batch Ingest job started on " + root.serverHost + " for " + root.currentUser.name.toUpperCase());
         addLog("▶ Queueing " + root.parsedItems.length + " items for download...");
 
         batchProc.payloadJson = JSON.stringify(payload);

@@ -220,6 +220,22 @@ def list_users():
 
     print(json.dumps({'users': user_list}))
 
+def sanitize_title(t):
+    t = re.sub(r'[\\/:*?"<>|]', '', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+def match_filename_title(f_name, short_title, clean_title):
+    fn_lower = f_name.lower()
+    st_lower = short_title.lower()
+    ct_lower = clean_title.lower()
+    if st_lower in fn_lower or ct_lower in fn_lower:
+        return True
+    words = [w.lower() for w in re.findall(r'\w+', ct_lower) if len(w) > 2]
+    if words and all(w in fn_lower for w in words):
+        return True
+    return False
+
 def resolve_song_file(sn):
     """
     Given a song string from spotDL (e.g. 'Cannons - Fire for You' or 'Hayden James - NUMB'
@@ -232,16 +248,17 @@ def resolve_song_file(sn):
     artist = parts[0].strip() if len(parts) >= 2 else ''
     title = ' - '.join(parts[1:]).strip() if len(parts) >= 2 else clean_sn
     short_title = title.split(' - ')[0].strip()
+    clean_title = sanitize_title(short_title)
 
     # 1. Search disk directly under artist folder
     if artist and os.path.exists(MUSIC_DIR):
         try:
             for d in os.listdir(MUSIC_DIR):
-                if d.lower() == artist.lower():
+                if d.lower() == artist.lower() or d.lower().replace(' ', '') == artist.lower().replace(' ', ''):
                     artist_dir = os.path.join(MUSIC_DIR, d)
                     for root, _, files in os.walk(artist_dir):
                         for f in files:
-                            if f.endswith(('.mp3', '.flac', '.m4a', '.opus')) and short_title.lower() in f.lower():
+                            if f.endswith(('.mp3', '.flac', '.m4a', '.opus')) and match_filename_title(f, short_title, clean_title):
                                 full_p = os.path.join(root, f)
                                 return full_p.replace(MUSIC_DIR, '/media/music')
         except Exception:
@@ -252,8 +269,8 @@ def resolve_song_file(sn):
         try:
             for root, _, files in os.walk(MUSIC_DIR):
                 for f in files:
-                    if f.endswith(('.mp3', '.flac', '.m4a', '.opus')) and short_title.lower() in f.lower():
-                        if not artist or artist.lower() in root.lower():
+                    if f.endswith(('.mp3', '.flac', '.m4a', '.opus')) and match_filename_title(f, short_title, clean_title):
+                        if not artist or artist.lower() in root.lower() or artist.lower().replace(' ', '') in root.lower().replace(' ', ''):
                             full_p = os.path.join(root, f)
                             return full_p.replace(MUSIC_DIR, '/media/music')
         except Exception:
@@ -286,7 +303,7 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    item_ids = []
+    resolved_pairs = [] # (path, cid)
     missing_paths = list(resolved_paths)
 
     for attempt in range(6):
@@ -296,8 +313,7 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
             row = cur.fetchone()
             if row:
                 cid = row[0].replace('-', '').lower()
-                if cid not in item_ids:
-                    item_ids.append(cid)
+                resolved_pairs.append((p, cid))
             else:
                 still_missing.append(p)
 
@@ -311,6 +327,7 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
             cur = conn.cursor()
             missing_paths = still_missing
 
+    item_ids = [pair[1] for pair in resolved_pairs]
     log(f"LOG: 🆔 Resolved {len(item_ids)} / {len(resolved_paths)} Jellyfin item IDs.")
 
     if not item_ids and not resolved_paths:
@@ -322,32 +339,50 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
     # 4. Check if playlist exists in Jellyfin
     existing_playlist_id = None
     try:
-        user_param = target_owner if target_owner != '00000000000000000000000000000000' else (owner_id or '')
-        req = urllib.request.Request(f"{JELLYFIN_URL}/Users/{user_param}/Items?includeItemTypes=Playlist&recursive=true&api_key={JELLYFIN_TOKEN}")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            pl_data = json.loads(resp.read())
-            for pl_item in pl_data.get('Items', []):
-                if pl_item.get('Name', '').lower() == playlist_name.lower():
-                    existing_playlist_id = pl_item.get('Id')
-                    break
+        cur.execute("SELECT Id FROM BaseItems WHERE Type = 'MediaBrowser.Controller.Playlists.Playlist' AND Name = ?", (playlist_name,))
+        row = cur.fetchone()
+        if row:
+            existing_playlist_id = row[0].replace('-', '').lower()
     except Exception:
         pass
 
-    if existing_playlist_id and item_ids:
-        log(f"LOG: 📌 Appending {len(item_ids)} tracks to existing playlist '{playlist_name}' ({existing_playlist_id})...")
-        ids_param = ','.join(item_ids)
-        url = f"{JELLYFIN_URL}/Playlists/{existing_playlist_id}/Items?ids={ids_param}&userId={target_owner}"
-        req = urllib.request.Request(url, method="POST")
-        req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
+    # Read existing paths in playlist.xml on disk
+    existing_paths_in_xml = set()
+    pl_dir = os.path.join(PLAYLISTS_DIR, playlist_name)
+    xml_file = os.path.join(pl_dir, 'playlist.xml')
+    if os.path.exists(xml_file):
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                log(f"LOG: 🔒 Appended {len(item_ids)} tracks to '{playlist_name}' successfully!")
-        except Exception as e:
-            log(f"LOG: ⚠️ Playlist append note: {e}")
+            with open(xml_file, 'r', encoding='utf-8') as f:
+                existing_paths_in_xml = {html.unescape(x).strip() for x in re.findall(r'<Path>([^<]+)</Path>', f.read())}
+        except Exception:
+            pass
+
+    # Filter items that are not already present in the playlist
+    new_ids = []
+    for p, cid in resolved_pairs:
+        if p not in existing_paths_in_xml and cid not in new_ids:
+            new_ids.append(cid)
+
+    if existing_playlist_id:
+        if new_ids:
+            log(f"LOG: 📌 Appending {len(new_ids)} new tracks to existing playlist '{playlist_name}' ({existing_playlist_id})...")
+            ids_param = ','.join(new_ids)
+            user_arg = f"&userId={owner_id}" if owner_id and owner_id != '00000000000000000000000000000000' else ""
+            url = f"{JELLYFIN_URL}/Playlists/{existing_playlist_id}/Items?ids={ids_param}{user_arg}"
+            req = urllib.request.Request(url, method="POST")
+            req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    log(f"LOG: 🔒 Appended {len(new_ids)} tracks to '{playlist_name}' successfully!")
+            except Exception as e:
+                log(f"LOG: ⚠️ Playlist append note: {e}")
+        else:
+            log(f"LOG: ✅ Playlist '{playlist_name}' is already up to date ({len(resolved_paths)} tracks).")
     elif item_ids:
         log(f"LOG: 🆕 Creating fresh playlist '{playlist_name}' with {len(item_ids)} tracks...")
         ids_param = ','.join(item_ids)
-        url = f"{JELLYFIN_URL}/Playlists?name={urllib.parse.quote(playlist_name)}&ids={ids_param}&userId={target_owner}&mediaType=Audio"
+        user_arg = f"&userId={owner_id}" if owner_id and owner_id != '00000000000000000000000000000000' else ""
+        url = f"{JELLYFIN_URL}/Playlists?name={urllib.parse.quote(playlist_name)}&ids={ids_param}{user_arg}&mediaType=Audio"
         req = urllib.request.Request(url, method="POST")
         req.add_header('X-Emby-Token', JELLYFIN_TOKEN)
         req.add_header('Content-Type', 'application/json')
@@ -366,7 +401,17 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
             with open(xml_file, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
 
-            existing_paths_in_xml = set(re.findall(r'<Path>([^<]+)</Path>', xml_content))
+            # De-duplicate existing items in xml_content if any
+            seen_p = set()
+            def dedup_filter(m):
+                p_val = html.unescape(m.group(1)).strip()
+                if p_val in seen_p:
+                    return ""
+                seen_p.add(p_val)
+                return m.group(0)
+            xml_content = re.sub(r'\s*<PlaylistItem>\s*<Path>([^<]+)</Path>\s*</PlaylistItem>', dedup_filter, xml_content)
+
+            existing_paths_in_xml = {html.unescape(x).strip() for x in re.findall(r'<Path>([^<]+)</Path>', xml_content)}
             paths_to_add = [p for p in resolved_paths if p not in existing_paths_in_xml]
 
             if paths_to_add:
@@ -399,7 +444,7 @@ def sync_playlist_to_jellyfin(playlist_name, owner_id, downloaded_song_names, is
     except Exception:
         pass
 
-def run_download(url, user_name, owner_id, song_action='none', song_playlist_name='', is_shared=False):
+def run_download(url, user_name, owner_id, song_action='none', song_playlist_name='', is_shared=False, bitrate='auto'):
     log("STAGE: discovery")
     log("STATUS: 🔍 Resolving Spotify metadata & scanning catalog...")
     log(f"LOG: 🌐 Contacting Spotify metadata API for {url}...")
@@ -416,7 +461,7 @@ def run_download(url, user_name, owner_id, song_action='none', song_playlist_nam
         '--threads', '2',
         '--max-retries', '3',
         '--sponsor-block',
-        '--bitrate', 'auto',
+        '--bitrate', bitrate or 'auto',
         '--dont-filter-results',
         '--output', '/music/{artist}/{album}/{track-number} - {title}.{output-ext}'
     ]
@@ -545,12 +590,31 @@ def main():
     if sys.argv[1] == '--batch':
         raw_payload = sys.argv[2]
         payload = json.loads(raw_payload)
-        user_id = payload.get('user_id', '')
-        user_name = payload.get('user_name', 'Kendon')
+        user_id = payload.get('user_id', '').strip()
+        user_name = payload.get('user_name', '').strip()
         items = payload.get('items', [])
+        if not items and 'urls' in payload:
+            items = [{'url': u, 'type': 'url'} for u in payload['urls']]
         song_action = payload.get('song_action', 'none')
-        song_playlist_name = payload.get('song_playlist_name', '').strip()
+        song_playlist_name = (payload.get('song_playlist_name') or payload.get('playlist_name') or '').strip()
+        bitrate = payload.get('bitrate', 'auto')
         is_shared = payload.get('is_shared', False) or user_id == '00000000000000000000000000000000'
+
+        if (not user_id or user_name == 'No User Selected') and not is_shared:
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                cur = conn.cursor()
+                cur.execute("SELECT Id, Username FROM Users WHERE LOWER(Username) != 'user' LIMIT 1")
+                u_row = cur.fetchone()
+                if u_row:
+                    user_id = u_row[0].replace('-', '').lower()
+                    if not user_name or user_name == 'No User Selected':
+                        user_name = u_row[1]
+            except Exception:
+                pass
+
+        if not user_name or user_name == 'No User Selected':
+            user_name = "Household (Shared)" if is_shared else "User"
 
         log("==================================================")
         log(f"▶ BATCH JOB: Initializing batch ingest ({len(items)} items) for {user_name}...")
@@ -566,7 +630,7 @@ def main():
 
             log(f"BATCH_ITEM: {idx}|{total_items}|{item_type}|{url}")
             log(f"STATUS: 🚀 Processing [{idx}/{total_items}] {item_type.capitalize()}...")
-            run_download(url, user_name, user_id, song_action, song_playlist_name, is_shared=is_shared)
+            run_download(url, user_name, user_id, song_action, song_playlist_name, is_shared=is_shared, bitrate=bitrate)
 
         log("STATUS: 🔄 Finalizing Jellyfin & Finamp music libraries...")
         try:

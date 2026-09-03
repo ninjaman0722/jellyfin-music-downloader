@@ -617,18 +617,22 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         # Prepare payload
+        items = [{"url": u, "type": "url"} for u in urls]
         payload = {
+            "items": items,
             "urls": urls,
             "user_id": self.selected_user.get("id"),
             "user_name": self.selected_user.get("name"),
             "is_shared": self.selected_user.get("is_shared", False),
             "bitrate": self.bitrate_combo.currentData(),
             "song_action": "none",
+            "song_playlist_name": "",
             "playlist_name": ""
         }
 
         if self.radio_existing_pl.isChecked():
             payload["song_action"] = "existing_playlist"
+            payload["song_playlist_name"] = self.pl_combo.currentText()
             payload["playlist_name"] = self.pl_combo.currentText()
         elif self.radio_new_pl.isChecked():
             name = self.pl_new_input.text().strip()
@@ -636,6 +640,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.warning(self, "Playlist Name", "Please enter a name for the new playlist.")
                 return
             payload["song_action"] = "new_playlist"
+            payload["song_playlist_name"] = name
             payload["playlist_name"] = name
 
         # Switch to Progress Tab
