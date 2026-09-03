@@ -1,0 +1,9 @@
+{
+  "jellyfin_url": "http://127.0.0.1:8096",
+  "jellyfin_token": "YOUR_JELLYFIN_API_TOKEN",
+  "music_dir": "/mnt/media/music",
+  "db_path": "/var/lib/jellyfin/data/jellyfin.db",
+  "playlists_dir": "/var/lib/jellyfin/data/playlists",
+  "music_folder_id": "OPTIONAL_MUSIC_FOLDER_ITEM_ID",
+  "playlists_folder_id": "OPTIONAL_PLAYLISTS_FOLDER_ITEM_ID"
+}

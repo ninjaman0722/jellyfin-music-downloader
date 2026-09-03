@@ -1,0 +1,7 @@
+{
+  "serverHost": "server-ip-or-hostname",
+  "jellyfinWebUrl": "http://localhost:8096",
+  "musicFolderUrl": "sftp://server-ip-or-hostname/mnt/media/music",
+  "remoteScriptPath": "~/spotdl/ingest.py",
+  "defaultUser": ""
+}

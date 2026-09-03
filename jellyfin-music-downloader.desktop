@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Download to Jellyfin (Music)
+Comment=Download Spotify & YouTube Music playlists directly to Jellyfin Server
+Exec=bash -c 'exec ~/.config/omarchy/extensions/jellyfin-music-app/run.sh'
+Icon=audio-headphones
+Terminal=false
+Categories=AudioVideo;Audio;Music;Network;
+Keywords=spotify;youtube;music;jellyfin;download;playlist;spotdl;

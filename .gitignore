@@ -1,0 +1,6 @@
+config.json
+server/server_config.json
+preferences.json
+*.log
+*.bak*
+__pycache__/
