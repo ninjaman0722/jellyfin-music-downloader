@@ -349,6 +349,7 @@ PanelWindow {
 
     function cancelIngestion() {
         if (batchProc.running) batchProc.running = false;
+        root.isServerTaskActive = false;
         stopRemoteProc.running = true;
         root.appState = "input";
         root.statusMessage = "Download cancelled by user.";
@@ -361,7 +362,7 @@ PanelWindow {
         id: stopRemoteProc
         command: [
             "bash", "-c",
-            "ssh -o ConnectTimeout=4 \"$1\" \"pkill -INT -f 'spotdl/ingest.py' || pkill -TERM -f 'spotdl/ingest.py' || true; sleep 1; docker stop $(docker ps -q --filter ancestor=spotdl-custom:latest) 2>/dev/null || true\"",
+            "ssh -o ConnectTimeout=4 \"$1\" \"pkill -9 -f 'spotdl/ingest.py' || true; docker stop -t 2 $(docker ps -q --filter ancestor=spotdl-custom:latest) 2>/dev/null || true; docker kill $(docker ps -q --filter ancestor=spotdl-custom:latest) 2>/dev/null || true; echo '{\\\"running\\\":false,\\\"status\\\":\\\"Cancelled by user\\\"}' > ~/spotdl/active_state.json\"",
             "_",
             root.serverHost
         ]

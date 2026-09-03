@@ -254,7 +254,7 @@ class IngestWorker(QThread):
         # Send remote clean termination
         subprocess.run(
             ["ssh", "-o", "ConnectTimeout=4", self.server_host,
-             "pkill -INT -f 'spotdl/ingest.py' || pkill -TERM -f 'spotdl/ingest.py' || true; sleep 1; docker stop $(docker ps -q --filter ancestor=spotdl-custom:latest) 2>/dev/null || true"],
+             "pkill -9 -f 'spotdl/ingest.py' || true; docker stop -t 2 $(docker ps -q --filter ancestor=spotdl-custom:latest) 2>/dev/null || true; docker kill $(docker ps -q --filter ancestor=spotdl-custom:latest) 2>/dev/null || true; echo '{\"running\":false,\"status\":\"Cancelled by user\"}' > ~/spotdl/active_state.json"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
 
