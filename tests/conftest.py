@@ -51,7 +51,7 @@ def create_contract_reference_app() -> FastAPI:
     app.state.config = {
         "music_dir": "/music",
         "bitrate": "320k",
-        "default_user": "kendon",
+        "default_user": "alice",
         "jellyfin_url": "http://192.168.1.159:8096",
         "download_threads": 4,
         "sponsorblock": True,
@@ -79,8 +79,8 @@ def create_contract_reference_app() -> FastAPI:
         return {
             "users": [
                 {
-                    "id": "user-kendon-guid",
-                    "name": "Kendon",
+                    "id": "user-alice-guid",
+                    "name": "Alice",
                     "has_password": True,
                     "is_admin": True,
                     "playlists": [{"id": "pl-01", "name": "Synthwave Drive", "track_count": 48}],
@@ -391,8 +391,8 @@ class MockJellyfinState:
     def __init__(self):
         self.users = [
             {
-                "Id": "user-kendon-guid-1111",
-                "Name": "Kendon",
+                "Id": "user-alice-guid-1111",
+                "Name": "Alice",
                 "HasPassword": True,
                 "Policy": {"IsAdministrator": True, "EnableContentDownloading": True},
             },
@@ -615,7 +615,7 @@ class MockDaemonServer:
             return {
                 "music_dir": "/mnt/media/music",
                 "bitrate": "320k",
-                "default_user": "Kendon",
+                "default_user": "Alice",
                 "jellyfin_url": "http://127.0.0.1:8096"
             }
 
@@ -625,7 +625,7 @@ class MockDaemonServer:
                 "users": [
                     {
                         "id": "user-guid-001",
-                        "name": "Kendon",
+                        "name": "Alice",
                         "has_password": True,
                         "is_admin": True,
                         "playlists": [{"id": "pl-01", "name": "Synthwave Drive", "track_count": 42}]

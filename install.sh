@@ -203,7 +203,7 @@ else
   "wsUrl": "ws://127.0.0.1:8095/ws/events",
   "jellyfinWebUrl": "http://127.0.0.1:8096",
   "musicFolderUrl": "/mnt/media/music",
-  "defaultUser": "Kendon",
+  "defaultUser": "",
   "bitrate": "320k",
   "embedLyrics": true,
   "embedCover": true,

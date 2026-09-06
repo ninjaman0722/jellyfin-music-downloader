@@ -104,7 +104,7 @@ class ServerConfig(BaseSettings):
     download_threads: int = Field(default=4, ge=1, le=16, description="Concurrent download workers")
     jellyfin_url: str = Field(default="http://127.0.0.1:8096", description="Jellyfin server REST URL")
     jellyfin_token: str = Field(default="", description="Jellyfin administrative API token (sensitive)")
-    default_user: str = Field(default="kendon", description="Default Jellyfin user account")
+    default_user: str = Field(default="", description="Default Jellyfin user account")
     sponsorblock: bool = Field(default=True, description="Enable SponsorBlock during extraction")
     lyrics_provider: str = Field(default="lrclib", description="Lyrics provider (lrclib)")
     max_file_size_mb: int = Field(default=250, description="Max audio track file size limit in MB")

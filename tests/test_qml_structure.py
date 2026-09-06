@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple
 import pytest
 
-APP_ROOT = Path(os.environ.get("JELLYFIN_APP_DIR", "/home/kendon/.config/omarchy/extensions/jellyfin-music-app"))
+APP_ROOT = Path(os.environ.get("JELLYFIN_APP_DIR", str(Path(__file__).resolve().parent.parent)))
 
 REQUIRED_VIEWS = [
     "IngestView.qml",

@@ -70,7 +70,7 @@ The test suite is structured across four distinct verification tiers:
   - **Small Audio Files**: Verifies that 50KB, 120KB, 250KB, and 340KB audio files are indexed and never deleted.
   - **Lyric Duration Matching**: Verifies audio with 210s matches 211s (+1s), matches 213s (+3s), but rejects 214s (+4s) or 285s (live acoustic version).
   - **Playlist Chunking**: 125 tracks sent as sequential calls of 50, 50, and 25 items in exact order.
-  - **Input Sanitization**: Single quotes (`"Kendon's 90's Rock"`) and slashes in titles handle safely without shell execution or directory traversal.
+  - **Input Sanitization**: Single quotes (`"Rock & Roll 90's"`) and slashes in titles handle safely without shell execution or directory traversal.
 
 ### Tier 3: Pairwise & State Integration
 - **Scope**: Verifies interactions between two or more system subsystems.

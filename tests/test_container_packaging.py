@@ -34,7 +34,7 @@ import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-VAULT_AGENT_ROOT = Path("/home/kendon/Documents/My Vault/.agents")
+VAULT_AGENT_ROOT = PROJECT_ROOT / ".scratch"
 PROPOSED_DOCKER_DIR = VAULT_AGENT_ROOT / "explorer_m5_docker"
 
 

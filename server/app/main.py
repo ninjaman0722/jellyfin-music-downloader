@@ -835,8 +835,8 @@ async def get_users(request: Request, settings: ServerConfig = Depends(get_setti
     return UsersResponse(
         users=[
             UserSummary(
-                id="user-kendon-guid",
-                name=settings.default_user.capitalize() if settings.default_user else "Kendon",
+                id="user-default-guid",
+                name=settings.default_user.capitalize() if settings.default_user else "DefaultUser",
                 has_password=True,
                 is_admin=True,
                 playlists=[

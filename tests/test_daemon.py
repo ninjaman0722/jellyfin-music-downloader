@@ -134,7 +134,7 @@ async def test_ingest_queue_endpoint_validation(async_client: httpx.AsyncClient)
         "/api/ingest",
         json={
             "urls": ["https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"],
-            "user_id": "user-kendon-guid",
+            "user_id": "user-alice-guid",
             "playlist_name": "Synthwave",
             "bitrate": "320k",
             "embed_lyrics": True,
@@ -162,7 +162,7 @@ async def test_cancel_valid_job(async_client: httpx.AsyncClient):
         "/api/ingest",
         json={
             "urls": ["https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"],
-            "user_id": "user-kendon-guid",
+            "user_id": "user-alice-guid",
             "playlist_name": "To Cancel",
         },
     )
@@ -389,8 +389,8 @@ async def test_users_proxy_unreachable_jellyfin_falls_back_gracefully(
         assert "users" in data
         assert len(data["users"]) > 0
         first_user = data["users"][0]
-        assert first_user["id"] == "user-kendon-guid"
-        assert first_user["name"] == "Kendon"
+        assert first_user["id"] == "user-default-guid"
+        assert first_user["name"] == "DefaultUser"
     finally:
         test_app.state.jellyfin = orig_jf
 
@@ -414,7 +414,7 @@ async def test_users_proxy_401_unauthorized_falls_back_gracefully(
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["users"]) > 0
-        assert data["users"][0]["id"] == "user-kendon-guid"
+        assert data["users"][0]["id"] == "user-default-guid"
     finally:
         test_app.state.jellyfin = orig_jf
 

@@ -383,7 +383,7 @@ class TestNonAsciiTrackResolution:
         respx_mock.get(path="/Users/u-1/Items").respond(200, json={"Items": jf_items})
 
         # Discrepancy 1: host uses /mnt/media/music (depth 3) vs container /music (depth 1)
-        # Discrepancy 2: host uses /home/kendon/audio/music vs container /var/lib/jellyfin/media
+        # Discrepancy 2: host uses /home/user/audio/music vs container /var/lib/jellyfin/media
         tracks = [
             {
                 "title": "前前前世",
@@ -393,7 +393,7 @@ class TestNonAsciiTrackResolution:
             {
                 "title": "夜に駆ける",
                 "artist": "YOASOBI",
-                "path": "/home/kendon/audio/music/YOASOBI/The Book/01-01 - 夜に駆ける.flac",
+                "path": "/home/user/audio/music/YOASOBI/The Book/01-01 - 夜に駆ける.flac",
             },
         ]
 

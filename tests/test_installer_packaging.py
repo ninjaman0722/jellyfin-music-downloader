@@ -44,7 +44,7 @@ from typing import Dict, List, Optional
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-VAULT_AGENT_ROOT = Path("/home/kendon/Documents/My Vault/.agents")
+VAULT_AGENT_ROOT = Path(__file__).resolve().parent.parent / ".scratch"
 PROPOSED_INSTALLER_DIR = VAULT_AGENT_ROOT / "explorer_m5_installer"
 
 
@@ -81,12 +81,13 @@ def get_script_path(script_name: str) -> Path:
 def get_systemd_service_path() -> Path:
     """Resolves jellyfin-music-daemon.service path."""
     for candidate in [
+        PROJECT_ROOT / "server" / "jellyfin-music-daemon.service",
         PROJECT_ROOT / "jellyfin-music-daemon.service",
         PROPOSED_INSTALLER_DIR / "jellyfin-music-daemon.service",
     ]:
         if candidate.exists():
             return candidate
-    return PROJECT_ROOT / "jellyfin-music-daemon.service"
+    return PROJECT_ROOT / "server" / "jellyfin-music-daemon.service"
 
 
 def get_desktop_entry_path() -> Path:
@@ -214,7 +215,7 @@ class TestConfigurationManagementAndSecurity:
 
         # Pre-create an existing config with sensitive user secrets
         existing_cfg = target_dir / "config.json"
-        original_secret = '{"secret": "kendon_saved_secret", "daemonUrl": "http://custom:8095"}'
+        original_secret = '{"secret": "custom_saved_secret", "daemonUrl": "http://custom:8095"}'
         existing_cfg.write_text(original_secret, encoding="utf-8")
         existing_cfg.chmod(0o644)
 
@@ -245,14 +246,14 @@ class TestConfigurationManagementAndSecurity:
 
         # 2. Verify original config was PRESERVED and not overwritten
         assert existing_cfg.exists(), "config.json disappeared after install.sh"
-        assert "kendon_saved_secret" in existing_cfg.read_text(encoding="utf-8"), (
+        assert "custom_saved_secret" in existing_cfg.read_text(encoding="utf-8"), (
             "FATAL REGRESSION: Existing config.json was overwritten with defaults!"
         )
 
         # 3. Verify backup file was generated
         backups = list(target_dir.glob("config.json.bak*"))
         assert len(backups) >= 1, f"Expected backup file 'config.json.bak*' in {target_dir}"
-        assert "kendon_saved_secret" in backups[0].read_text(encoding="utf-8")
+        assert "custom_saved_secret" in backups[0].read_text(encoding="utf-8")
 
         # 4. Verify secure 0600 permissions on config and backup
         cfg_mode = stat.S_IMODE(existing_cfg.stat().st_mode)

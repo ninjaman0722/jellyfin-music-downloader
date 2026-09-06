@@ -113,7 +113,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "wsUrl": "ws://127.0.0.1:8095/ws/events",
     "jellyfinWebUrl": "http://127.0.0.1:8096",
     "musicFolderUrl": "/mnt/media/music",
-    "defaultUser": "Kendon",
+    "defaultUser": "",
     "bitrate": "320k",
     "embedLyrics": True,
     "embedCover": True,
@@ -1204,7 +1204,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ws_url_input = QtWidgets.QLineEdit(self.config.get("wsUrl", "ws://127.0.0.1:8095/ws/events"))
         self.jellyfin_url_input = QtWidgets.QLineEdit(self.config.get("jellyfinWebUrl", "http://127.0.0.1:8096"))
         self.folder_url_input = QtWidgets.QLineEdit(self.config.get("musicFolderUrl", "/mnt/media/music"))
-        self.default_user_input = QtWidgets.QLineEdit(self.config.get("defaultUser", "Kendon"))
+        self.default_user_input = QtWidgets.QLineEdit(self.config.get("defaultUser", ""))
 
         form.addRow("Daemon REST URL:", self.daemon_url_input)
         form.addRow("Daemon WebSocket URL:", self.ws_url_input)

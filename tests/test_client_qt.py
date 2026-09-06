@@ -44,7 +44,7 @@ except ImportError:
 try:
     import app
 except ImportError:
-    sys.path.insert(0, "/home/kendon/Documents/My Vault/.agents/explorer_m4_qt")
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import proposed_app as app
 
 
@@ -76,7 +76,7 @@ class MockDaemonServer:
             return {
                 "music_dir": "/mnt/media/music",
                 "bitrate": "320k",
-                "default_user": "Kendon",
+                "default_user": "Alice",
                 "jellyfin_url": "http://127.0.0.1:8096"
             }
 
@@ -86,7 +86,7 @@ class MockDaemonServer:
                 "users": [
                     {
                         "id": "user-guid-001",
-                        "name": "Kendon",
+                        "name": "Alice",
                         "has_password": True,
                         "is_admin": True,
                         "playlists": [{"id": "pl-01", "name": "Synthwave Drive", "track_count": 42}]
@@ -599,7 +599,7 @@ class TestDaemonApiClient:
         client = app.DaemonApiClient(mock_daemon.base_url)
         users = client.get_users()
         assert len(users) == 2
-        assert users[0]["name"] == "Kendon"
+        assert users[0]["name"] == "Alice"
         assert users[0]["playlists"][0]["name"] == "Synthwave Drive"
 
     def test_resolve(self, mock_daemon):

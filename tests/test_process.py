@@ -71,7 +71,7 @@ async def test_safe_subprocess_argument_escaping():
     manager = ProcessManager()
     await manager.register_job("job_safe_args", "user1", "Test Playlist")
 
-    special_arg = "Kendon's 90's Rock; rm -rf /tmp/fake; echo $HOME"
+    special_arg = "Rock & Roll 90's; rm -rf /tmp/fake; echo $HOME"
     cmd = [sys.executable, "-c", "import sys; print(sys.argv[1])", special_arg]
 
     captured = []

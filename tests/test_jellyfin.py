@@ -617,7 +617,7 @@ async def test_cross_user_append_raises_permission_error(respx_mock, jellyfin_cl
 
 def test_zero_sqlite_or_xml_disk_access():
     """Verify server/app/jellyfin.py does not import sqlite3, touch jellyfin.db, or mutate playlist.xml."""
-    jellyfin_py = Path("/home/kendon/.config/omarchy/extensions/jellyfin-music-app/server/app/jellyfin.py")
+    jellyfin_py = Path(__file__).resolve().parent.parent / "server" / "app" / "jellyfin.py"
     assert jellyfin_py.exists(), "jellyfin.py file does not exist!"
     content = jellyfin_py.read_text(encoding="utf-8")
     assert "sqlite3" not in content, "Forbidden 'sqlite3' found in jellyfin.py!"
