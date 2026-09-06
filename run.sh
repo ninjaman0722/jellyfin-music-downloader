@@ -57,34 +57,26 @@ DAEMON_URL="http://127.0.0.1:8095"
 CONFIG_FILE="${SCRIPT_DIR}/config.json"
 
 if [ -f "${CONFIG_FILE}" ]; then
-    EXTRACTED_URL=$("$PY_BIN" -c "
+    eval "$("$PY_BIN" -c "
 import json
 try:
     with open('${CONFIG_FILE}', 'r', encoding='utf-8') as f:
         cfg = json.load(f)
-    print(cfg.get('daemonUrl', ''))
+    if cfg.get('daemonUrl'):
+        print(f'export DAEMON_URL=\"{cfg[\"daemonUrl\"]}\"')
+    if cfg.get('defaultUser') is not None:
+        print(f'export DEFAULT_USER=\"{cfg[\"defaultUser\"]}\"')
+    if cfg.get('jellyfinWebUrl'):
+        print(f'export JELLYFIN_WEB_URL=\"{cfg[\"jellyfinWebUrl\"]}\"')
+    if cfg.get('musicFolderUrl'):
+        print(f'export MUSIC_FOLDER_URL=\"{cfg[\"musicFolderUrl\"]}\"')
+    if 'autoClipboardDetect' in cfg:
+        print(f'export AUTO_CLIPBOARD_DETECT=\"{str(cfg[\"autoClipboardDetect\"]).lower()}\"')
 except Exception:
     pass
-" 2>/dev/null || true)
-
-    if [ -n "${EXTRACTED_URL}" ]; then
-        DAEMON_URL="${EXTRACTED_URL}"
-    fi
-
-    EXTRACTED_USER=$("$PY_BIN" -c "
-import json
-try:
-    with open('${CONFIG_FILE}', 'r', encoding='utf-8') as f:
-        cfg = json.load(f)
-    print(cfg.get('defaultUser', ''))
-except Exception:
-    pass
-" 2>/dev/null || true)
-    if [ -n "${EXTRACTED_USER}" ]; then
-        export DEFAULT_USER="${EXTRACTED_USER}"
-    fi
+" 2>/dev/null || true)"
 fi
-export DAEMON_URL
+export DAEMON_URL="${DAEMON_URL:-http://127.0.0.1:8095}"
 
 HEALTH_URL="${DAEMON_URL%/}/health"
 

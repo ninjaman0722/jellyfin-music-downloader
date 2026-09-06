@@ -34,6 +34,9 @@ PanelWindow {
     property string daemonUrl: Quickshell.env("DAEMON_URL") || "http://127.0.0.1:8095"
     property string daemonWsUrl: root.daemonUrl.replace("http://", "ws://").replace("https://", "wss://") + "/ws/events"
     property string defaultUserName: Quickshell.env("DEFAULT_USER") || ""
+    property string jellyfinWebUrl: Quickshell.env("JELLYFIN_WEB_URL") || "http://127.0.0.1:8096"
+    property string musicFolderUrl: Quickshell.env("MUSIC_FOLDER_URL") || "/mnt/media/music"
+    property bool autoClipboardDetect: Quickshell.env("AUTO_CLIPBOARD_DETECT") !== "false"
     property string audioBitrate: "320k"
     property string lastClipboardUrl: ""
 
@@ -182,7 +185,7 @@ PanelWindow {
             waitForEnd: true
             onStreamFinished: {
                 var txt = (this.text || "").trim();
-                if ((txt.indexOf("spotify.com") !== -1 || txt.indexOf("music.youtube.com") !== -1) && txt !== root.lastClipboardUrl) {
+                if (root.autoClipboardDetect && (txt.indexOf("spotify.com") !== -1 || txt.indexOf("music.youtube.com") !== -1) && txt !== root.lastClipboardUrl) {
                     root.lastClipboardUrl = txt;
                     ingestView.appendUrl(txt);
                     toast.show("Auto-loaded URL from clipboard", "info");
@@ -191,18 +194,11 @@ PanelWindow {
         }
     }
 
-    Process {
-        id: notifyProc
-        property string body: ""
-        command: ["notify-send", "-i", "audio-headphones", "Jellyfin Music Downloader", body]
-    }
-
+    Process { id: notifyProc; property string body: ""; command: ["notify-send", "-i", "audio-headphones", "Jellyfin Music Downloader", body] }
     Process {
         id: saveConfigProc
-        property string newUrl: ""
-        property string newBitrate: ""
-        property string newUser: ""
-        command: ["python3", "-c", "import json, os, sys; p = os.path.expanduser('~/.config/omarchy/extensions/jellyfin-music-app/config.json'); data = json.load(open(p)) if os.path.exists(p) else {}; data['daemonUrl'] = sys.argv[1]; data['bitrate'] = sys.argv[2]; data['defaultUser'] = sys.argv[3]; os.makedirs(os.path.dirname(p), exist_ok=True); open(p, 'w').write(json.dumps(data, indent=2))", newUrl, newBitrate, newUser]
+        property string jsonStr: ""
+        command: ["python3", "-c", "import json, os, sys; p = os.path.expanduser('~/.config/omarchy/extensions/jellyfin-music-app/config.json'); data = json.load(open(p)) if os.path.exists(p) else {}; data.update(json.loads(sys.argv[1])); os.makedirs(os.path.dirname(p), exist_ok=True); open(p, 'w').write(json.dumps(data, indent=2))", jsonStr]
     }
 
     Component.onCompleted: { root.fetchUsers(); clipProc.running = true; }
@@ -280,11 +276,17 @@ PanelWindow {
 
                 SettingsView {
                     id: settingsView
-                    theme: theme; daemonUrl: root.daemonUrl; usersList: root.usersList; defaultBitrate: root.audioBitrate
-                    onSaveConfig: function(url, br) {
-                        root.daemonUrl = url; root.daemonWsUrl = url.replace("http://", "ws://").replace("https://", "wss://") + "/ws/events"; root.audioBitrate = br;
-                        saveConfigProc.newUrl = url; saveConfigProc.newBitrate = br; saveConfigProc.newUser = root.defaultUserName;
-                        saveConfigProc.running = true; root.fetchUsers(); toast.show("Settings saved", "success");
+                    theme: theme; daemonUrl: root.daemonUrl; usersList: root.usersList
+                    defaultUserName: root.defaultUserName; jellyfinWebUrl: root.jellyfinWebUrl
+                    musicFolderUrl: root.musicFolderUrl; autoClipboardDetect: root.autoClipboardDetect
+                    onSaveConfig: function(cfg) {
+                        if (cfg.daemonUrl) { root.daemonUrl = cfg.daemonUrl; root.daemonWsUrl = cfg.daemonUrl.replace("http://", "ws://").replace("https://", "wss://") + "/ws/events"; }
+                        if (cfg.defaultUser !== undefined) root.defaultUserName = cfg.defaultUser;
+                        if (cfg.jellyfinWebUrl) root.jellyfinWebUrl = cfg.jellyfinWebUrl;
+                        if (cfg.musicFolderUrl) root.musicFolderUrl = cfg.musicFolderUrl;
+                        if (cfg.autoClipboardDetect !== undefined) root.autoClipboardDetect = cfg.autoClipboardDetect;
+                        saveConfigProc.jsonStr = JSON.stringify(cfg);
+                        saveConfigProc.running = true; root.fetchUsers(); toast.show("Settings saved successfully", "success");
                     }
                 }
             }
