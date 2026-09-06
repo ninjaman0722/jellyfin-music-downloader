@@ -1,0 +1,22 @@
+[Unit]
+Description=Jellyfin Music Downloader Daemon (V2 REST & WebSocket Engine)
+Documentation=https://github.com/omarchy/jellyfin-music-app
+After=network.target sound.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.config/omarchy/extensions/jellyfin-music-app
+Environment=PYTHONUNBUFFERED=1
+Environment=PORT=8095
+Environment=HOST=127.0.0.1
+Environment=PATH=%h/.config/omarchy/extensions/jellyfin-music-app/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.config/omarchy/extensions/jellyfin-music-app/.venv/bin/python3 -m uvicorn server.app.main:app --host 127.0.0.1 --port 8095
+Restart=on-failure
+RestartSec=5s
+KillMode=process
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

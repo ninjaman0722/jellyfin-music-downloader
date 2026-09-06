@@ -1,0 +1,9 @@
+# Development & Test Dependencies for Jellyfin Music Downloader Daemon V2
+-r requirements.txt
+
+# Testing Framework & Async Plugins
+pytest==8.3.4
+pytest-asyncio==0.25.2
+
+# Mocking & HTTP Stubs
+respx==0.22.0

@@ -3,4 +3,9 @@ server/server_config.json
 preferences.json
 *.log
 *.bak*
+*.backup*
+*.kendon_backup
 __pycache__/
+.env
+.venv/
+.pytest_cache/

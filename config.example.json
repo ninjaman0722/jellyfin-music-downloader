@@ -1,7 +1,12 @@
 {
-  "serverHost": "server-ip-or-hostname",
-  "jellyfinWebUrl": "http://localhost:8096",
-  "musicFolderUrl": "sftp://server-ip-or-hostname/mnt/media/music",
-  "remoteScriptPath": "~/spotdl/ingest.py",
-  "defaultUser": ""
+  "daemonUrl": "http://127.0.0.1:8095",
+  "wsUrl": "ws://127.0.0.1:8095/ws/events",
+  "jellyfinWebUrl": "http://127.0.0.1:8096",
+  "musicFolderUrl": "/mnt/media/music",
+  "defaultUser": "",
+  "bitrate": "320k",
+  "embedLyrics": true,
+  "embedCover": true,
+  "autoClipboardDetect": true,
+  "themeSync": true
 }

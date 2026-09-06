@@ -30,7 +30,6 @@ jellyfin-music-app/
 └── server/                           # Backend server components
     ├── Dockerfile                    # Container definition with spotDL, Deno, and patches
     ├── ingest.py                     # Ingestion orchestrator & Jellyfin API synchronizer
-    ├── patch_skip.py                 # In-memory indexer & rapid skip filter
     └── get-music.sh                  # Optional CLI ingestion wrapper
 ```
 

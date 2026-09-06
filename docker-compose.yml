@@ -1,0 +1,45 @@
+# ==============================================================================
+# Jellyfin Music Downloader V2 - Root Docker Compose Definition
+# ==============================================================================
+
+services:
+  jellyfin-music-daemon:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: omarchy/jellyfin-music-daemon:2.0.0
+    container_name: jellyfin-music-daemon
+    restart: unless-stopped
+    ports:
+      - "8095:8095"
+    volumes:
+      # Music media storage volume (defaults to /mnt/media/music on host)
+      - ${MUSIC_DIR:-/mnt/media/music}:/music
+      # Read-only configuration file mount
+      - ${SERVER_CONFIG:-./server/server_config.json}:/app/server_config.json:ro
+      # Rotating application logs
+      - ./server/logs:/app/logs
+    environment:
+      - MUSIC_DIR=/music
+      - BITRATE=${BITRATE:-320k}
+      - PORT=8095
+      - JELLYFIN_URL=${JELLYFIN_URL:-http://localhost:8096}
+      - JELLYFIN_TOKEN=${JELLYFIN_TOKEN:-}
+      - DEFAULT_USER=${DEFAULT_USER:-}
+      - DOWNLOAD_THREADS=${DOWNLOAD_THREADS:-4}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PUID=1000
+      - PGID=1000
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

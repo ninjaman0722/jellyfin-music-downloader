@@ -1,9 +1,12 @@
 [Desktop Entry]
 Type=Application
 Name=Download to Jellyfin (Music)
+GenericName=Jellyfin Music Downloader
 Comment=Download Spotify & YouTube Music playlists directly to Jellyfin Server
-Exec=bash -c 'exec ~/.config/omarchy/extensions/jellyfin-music-app/run.sh'
+Exec=/home/kendon/.config/omarchy/extensions/jellyfin-music-app/run.sh
 Icon=audio-headphones
 Terminal=false
 Categories=AudioVideo;Audio;Music;Network;
-Keywords=spotify;youtube;music;jellyfin;download;playlist;spotdl;
+Keywords=spotify;youtube;music;jellyfin;download;playlist;
+StartupNotify=true
+StartupWMClass=jellyfin-music-app

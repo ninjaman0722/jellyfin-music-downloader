@@ -1,0 +1,21 @@
+# Production Pinned Dependencies for Jellyfin Music Downloader Daemon V2
+# Generated for Python 3.12 (Debian Bookworm)
+
+# ASGI Web Framework & Server
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Settings & Configuration Management
+pydantic==2.10.5
+pydantic-settings==2.7.1
+
+# HTTP & WebSocket Networking
+aiohttp==3.11.11
+httpx==0.28.1
+websockets==14.1
+
+# Audio Metadata & Media Tagging
+mutagen==1.47.0
+
+# Downloader CLI Engines
+yt-dlp==2025.01.26
