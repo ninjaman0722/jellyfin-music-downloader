@@ -795,8 +795,8 @@ class JellyfinClient:
 
             if attempt < max_retries:
                 logger.debug(
-                    "Track resolution attempt %d: %d/%d tracks matched; waiting %.1fs for scanner...",
-                    attempt, len(tracks) - len(unresolved_indices), len(tracks), retry_delay,
+                    "Track resolution attempt %d/%d: %d/%d tracks matched; waiting %.1fs for scanner...",
+                    attempt, max_retries, len(tracks) - len(unresolved_indices), len(tracks), retry_delay,
                 )
                 await asyncio.sleep(retry_delay)
 

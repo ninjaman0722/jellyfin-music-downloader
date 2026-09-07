@@ -197,7 +197,118 @@ class SpotifyMetadataExtractor:
     Fetches public embed metadata and catalog releases in sub-second times.
     Requires no Spotify API credentials or SpotDL authentication.
     """
+    def _fetch_remaining_playlist_tracks(
+        self,
+        playlist_id: str,
+        playlist_name: str,
+        start_offset: int = 100,
+    ) -> List[ResolveTrack]:
+        """Fetch tracks beyond the 100-track embed limit using Spotify's web player token."""
+        import json
+        import urllib.error
+        import urllib.request
+        import unicodedata
 
+        token_url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
+        token_headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+            "Accept": "application/json",
+            "Referer": "https://open.spotify.com/",
+            "Origin": "https://open.spotify.com",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+        }
+        token_req = urllib.request.Request(token_url, headers=token_headers)
+        token = None
+        try:
+            with urllib.request.urlopen(token_req, timeout=10) as resp:
+                token_data = json.loads(resp.read().decode("utf-8"))
+                token = token_data.get("accessToken")
+        except Exception as exc:
+            logger.warning("Failed to fetch anonymous Spotify access token: %s", exc)
+            return []
+
+        if not token:
+            logger.warning("Spotify access token was empty")
+            return []
+
+        extra_tracks: List[ResolveTrack] = []
+        offset = start_offset
+        track_idx = start_offset + 1
+        max_tracks = 5000
+
+        api_headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+            "Accept": "application/json",
+            "Referer": "https://open.spotify.com/",
+            "Origin": "https://open.spotify.com",
+            "App-Platform": "WebPlayer",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+        }
+
+        while offset < max_tracks:
+            api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?offset={offset}&limit=100"
+            api_req = urllib.request.Request(api_url, headers=api_headers)
+            try:
+                with urllib.request.urlopen(api_req, timeout=12) as resp:
+                    page_data = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as http_err:
+                if http_err.code == 429:
+                    retry_after = int(http_err.headers.get("Retry-After", 2))
+                    logger.warning("Spotify 429 hit; sleeping %ds...", retry_after)
+                    time.sleep(retry_after)
+                    continue
+                logger.warning("HTTP error %d at offset %d: %s", http_err.code, offset, http_err)
+                break
+            except Exception as exc:
+                logger.warning("Failed to fetch Spotify tracks at offset %d: %s", offset, exc)
+                break
+
+            items = page_data.get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                t = item.get("track")
+                if not t or not isinstance(t, dict):
+                    continue
+
+                t_id = t.get("id") or f"{playlist_id}_{track_idx}"
+                t_title = unicodedata.normalize("NFKC", str(t.get("name") or f"Track {track_idx}")).strip()
+
+                artists_list = t.get("artists") or []
+                art_names = [a.get("name") for a in artists_list if isinstance(a, dict) and a.get("name")]
+                t_artist = ", ".join(art_names) if art_names else "Unknown Artist"
+                t_artist = unicodedata.normalize("NFKC", str(t_artist)).strip()
+
+                t_dur = float(t.get("duration_ms") or 180000.0)
+                disc_num = int(t.get("disc_number") or 1)
+
+                extra_tracks.append(
+                    ResolveTrack(
+                        id=f"t_{t_id}",
+                        title=t_title,
+                        artist=t_artist,
+                        album=playlist_name,
+                        disc_number=disc_num,
+                        track_number=track_idx,
+                        duration_ms=t_dur,
+                        exists_locally=False,
+                        local_path=None,
+                        source_playlist_name=playlist_name,
+                    )
+                )
+                track_idx += 1
+
+            if not page_data.get("next"):
+                break
+            offset += len(items)
+
+        return extra_tracks
     async def _extract_artist_discography(
         self,
         artist_id: str,
@@ -443,6 +554,23 @@ class SpotifyMetadataExtractor:
                         source_playlist_name=clean_title if entity_type == "playlist" else None,
                     )
                 )
+
+            # Paginate Spotify Web API if playlist exceeds the 100-item embed cap
+            if entity_type == "playlist" and len(raw_track_list) >= 100:
+                logger.info("Spotify playlist '%s' has 100+ tracks; fetching remaining pages...", clean_title)
+                try:
+                    extra = await loop.run_in_executor(
+                        None,
+                        lambda: self._fetch_remaining_playlist_tracks(
+                            playlist_id=matched_id,
+                            playlist_name=clean_title,
+                            start_offset=len(tracks),
+                        ),
+                    )
+                    tracks.extend(extra)
+                    logger.info("Fetched %d additional tracks (total: %d tracks)", len(extra), len(tracks))
+                except Exception as exc:
+                    logger.warning("Failed to paginate remaining playlist tracks: %s", exc)
 
             logger.info("Successfully resolved Spotify %s '%s' (%d tracks)", entity_type, clean_title, len(tracks))
             return clean_title, playlist_id, tracks

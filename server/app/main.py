@@ -515,11 +515,16 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                 already_present_count=existing_count,
             )
 
-            # Stage 3: Metadata tagging and synchronized lyrics
-            downloaded_results_by_id = {}
-            for res in results:
-                downloaded_results_by_id[res.track_id] = res
-                if res.success and res.path and res.path.exists():
+# Stage 3: Concurrent metadata tagging and synchronized lyrics
+            downloaded_results_by_id = {res.track_id: res for res in results}
+            successful_downloads = [
+                res for res in results if res.success and res.path and res.path.exists()
+            ]
+
+            tag_semaphore = asyncio.Semaphore(4)
+
+            async def _process_track_metadata(res: TrackResult):
+                async with tag_semaphore:
                     if indexer:
                         indexer.add_track(res.path, res.title, res.artist)
                     if req.embed_lyrics and lyrics_client:
@@ -531,13 +536,17 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 audio_duration=res.duration_seconds,
                             )
                             if lrc_res.has_lyrics() and tagger:
-                                tagger.embed_metadata(
+                                await asyncio.to_thread(
+                                    tagger.embed_metadata,
                                     file_path=res.path,
                                     track={"title": res.title, "artist": res.artist, "album": res.album},
                                     lyrics=lrc_res.best_lyrics(),
                                 )
                         except Exception as tag_err:
                             logger.warning("[%s] Tagging failed for %s: %s", job_id, res.title, tag_err)
+
+            if successful_downloads:
+                await asyncio.gather(*[_process_track_metadata(r) for r in successful_downloads])
 
             downloaded_count = sum(1 for r in results if r.success and not r.was_skipped)
             skipped_count = existing_count + sum(1 for r in results if r.was_skipped)
@@ -549,24 +558,34 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
 
             if jellyfin:
                 try:
-                    # 1. Trigger Jellyfin library refresh
-                    logger.info("[%s] Triggering Jellyfin library scan...", job_id)
-                    await ws_manager.broadcast(
-                        LogEvent(
+                    # 1. Resolve Music Virtual Folder once for targeted scanning and scoped queries
+                    music_folder = await jellyfin.find_music_library(music_dir=settings.music_dir)
+                    music_folder_id = music_folder.item_id if music_folder else None
+
+                    # 2. Trigger library refresh ONLY if new tracks were actually written to disk
+                    if downloaded_count > 0:
+                        logger.info("[%s] Triggering targeted Jellyfin library scan...", job_id)
+                        await ws_manager.broadcast(
+                            LogEvent(
+                                job_id=job_id,
+                                level="INFO",
+                                message="Triggering Jellyfin library scan for newly ingested tracks...",
+                                logger_name="daemon.pipeline",
+                            ),
                             job_id=job_id,
-                            level="INFO",
-                            message="Triggering Jellyfin library scan for newly ingested tracks...",
-                            logger_name="daemon.pipeline",
-                        ),
-                        job_id=job_id,
-                    )
-                    try:
-                        await jellyfin.refresh_library(music_dir=settings.music_dir)
-                    except Exception as ref_err:
-                        logger.warning("[%s] Jellyfin library refresh non-fatal error: %s", job_id, ref_err)
+                        )
+                        try:
+                            await jellyfin.refresh_library(
+                                item_id=music_folder_id,
+                                music_dir=settings.music_dir,
+                            )
+                        except Exception as ref_err:
+                            logger.warning("[%s] Jellyfin library refresh non-fatal error: %s", job_id, ref_err)
+                    else:
+                        logger.info("[%s] All tracks exist locally; skipping library scan.", job_id)
 
                     if req.user_id and effective_pl_name not in ("__NO_PLAYLIST__", "NONE", ""):
-                        # 2. Collect tracks for playlist in source order
+                        # 3. Collect tracks for playlist in source order
                         tracks_for_playlist: List[Dict[str, Any]] = []
                         if diff_res and diff_res.tracks:
                             for tr in diff_res.tracks:
@@ -593,7 +612,7 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                             "source_playlist_name": getattr(tr, "source_playlist_name", None),
                                         })
 
-                        # 3. Partition tracks by target playlist (Playlists vs Loose Tracks)
+                        # 4. Partition tracks by target playlist
                         from collections import defaultdict
                         playlist_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
                         has_explicit_sources = any(tr.get("source_playlist_name") for tr in tracks_for_playlist)
@@ -604,15 +623,13 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 if src_pl and src_pl not in ("Streaming Tracks", "Imported Tracks", "Resolved Playlist"):
                                     playlist_groups[src_pl].append(tr)
                                 else:
-                                    # Loose track: only added to a playlist if the user explicitly chose one
                                     if effective_pl_name and effective_pl_name not in ("__NO_PLAYLIST__", "AUTO", ""):
                                         playlist_groups[effective_pl_name].append(tr)
                         else:
-                            # Loose tracks only or single unnamed stream
                             if effective_pl_name and effective_pl_name not in ("__NO_PLAYLIST__", "AUTO", ""):
                                 playlist_groups[effective_pl_name] = tracks_for_playlist
 
-                        # 4. Resolve IDs and create/sync each playlist independently in Jellyfin
+                        # 5. Resolve Item IDs with folder scoping and dynamic polling
                         for pl_name, grp_tracks in playlist_groups.items():
                             if not grp_tracks:
                                 continue
@@ -621,6 +638,9 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 user_id=req.user_id,
                                 tracks=grp_tracks,
                                 music_dir=settings.music_dir,
+                                music_folder_id=music_folder_id,
+                                max_retries=10 if downloaded_count > 0 else 2,
+                                retry_delay=2.0,
                             )
                             if item_ids:
                                 logger.info(
@@ -635,31 +655,16 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 )
                                 if created_pl_id:
                                     final_playlist_id = created_pl_id
-                                    CHUNK_SIZE = 50
-                                    total_items = len(item_ids)
-                                    total_chunks = (total_items + CHUNK_SIZE - 1) // CHUNK_SIZE
-
-                                    for chunk_idx in range(total_chunks):
-                                        start_i = chunk_idx * CHUNK_SIZE
-                                        chunk = item_ids[start_i : start_i + CHUNK_SIZE]
-                                        logger.info(
-                                            "[%s] Appending chunk %d/%d (%d tracks) to playlist %s",
-                                            job_id,
-                                            chunk_idx + 1,
-                                            total_chunks,
-                                            len(chunk),
-                                            created_pl_id,
-                                        )
-                                        await jellyfin.add_items_to_playlist(
-                                            user_id=req.user_id,
-                                            playlist_id=created_pl_id,
-                                            item_ids=chunk,
-                                        )
+                                    await jellyfin.add_items_to_playlist(
+                                        user_id=req.user_id,
+                                        playlist_id=created_pl_id,
+                                        item_ids=item_ids,
+                                    )
                                     await ws_manager.broadcast(
                                         LogEvent(
                                             job_id=job_id,
                                             level="INFO",
-                                            message=f"Appended chunk {chunk_idx + 1}/{total_chunks} ({len(chunk)} tracks) to Jellyfin playlist '{pl_name}'",
+                                            message=f"Appended {len(item_ids)} tracks to Jellyfin playlist '{pl_name}'",
                                             logger_name="daemon.pipeline",
                                         ),
                                         job_id=job_id,
@@ -683,16 +688,6 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
 
                 except Exception as jf_err:
                     logger.warning("[%s] Jellyfin playlist assembly non-fatal error: %s", job_id, jf_err)
-                    await ws_manager.broadcast(
-                        LogEvent(
-                            job_id=job_id,
-                            level="WARNING",
-                            message=f"Jellyfin playlist sync failed ({jf_err}); downloaded tracks remain preserved on disk.",
-                            logger_name="daemon.pipeline",
-                        ),
-                        job_id=job_id,
-                    )
-
             await ws_manager.broadcast(
                 JobCompletedEvent(
                     job_id=job_id,

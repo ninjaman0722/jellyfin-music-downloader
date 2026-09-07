@@ -173,7 +173,7 @@ class Downloader:
         ws_broadcaster: Optional[Any] = None,  # ConnectionManager
         concurrency: int = 4,
         bitrate: str = "320k",
-        format_ext: str = ".mp3",
+        format_ext: str = ".m4a",
         sponsorblock: bool = True,
         per_track_timeout: float = 180.0,
         max_retries: int = 2,
@@ -201,19 +201,18 @@ class Downloader:
         track: DownloadTrack,
         part_path: Path,
     ) -> List[str]:
-        """Builds a secure argv list (shell=False) for spotdl or yt-dlp."""
-        # Use custom runner if supplied, otherwise determine binary
+        """Builds an optimized argv list (shell=False) for yt-dlp."""
         engine = self.engine
         if engine == DownloadEngine.AUTO:
-            # Check binary availability in PATH
-            if shutil.which("spotdl") is not None:
+            if shutil.which("yt-dlp") is not None:
+                engine = DownloadEngine.YTDLP
+            elif shutil.which("spotdl") is not None:
                 engine = DownloadEngine.SPOTDL
             else:
                 engine = DownloadEngine.YTDLP
 
         if engine == DownloadEngine.SPOTDL:
             query = track.url if track.url else f"{track.artist} - {track.title}"
-            # Ensure spotdl writes a direct file rather than creating a directory by using {output-ext}
             spotdl_output = f"{part_path.with_suffix('')}.{{output-ext}}"
             cmd = [
                 "spotdl",
@@ -228,16 +227,21 @@ class Downloader:
                 cmd.append("--sponsor-block")
             return cmd
 
-        # yt-dlp invocation
+        # High-performance yt-dlp zero-copy configuration
         target_query = track.url if track.url else f"ytsearch1:{track.artist} - {track.title} audio"
+        fmt = self.format_ext.lstrip(".")
         cmd = [
             "yt-dlp",
             target_query,
+            "-f", "bestaudio[ext=m4a]/bestaudio" if fmt == "m4a" else "bestaudio",
             "-x",
-            "--audio-format", self.format_ext.lstrip("."),
+            "--audio-format", fmt,
             "--audio-quality", self.bitrate,
+            "--concurrent-fragments", "4",
             "--no-playlist",
-            "--no-part",  # We explicitly manage .part via part_path
+            "--no-part",
+            "--no-keep-video",
+            "--no-cache-dir",
             "-o", str(part_path),
         ]
         if self.sponsorblock:

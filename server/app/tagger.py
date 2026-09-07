@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from mutagen.mp4 import MP4, MP4Cover
 
 import mutagen
 from mutagen.flac import FLAC, Picture
@@ -202,7 +203,7 @@ def coerce_metadata(
 # ==============================================================================
 
 class AudioTagger:
-    """Unified tagging engine for MP3 (ID3v2.4) and FLAC audio files."""
+    """Unified tagging engine for MP3 (ID3v2.4), FLAC, and M4A/AAC audio files."""
 
     @staticmethod
     def tag_mp3(
@@ -221,7 +222,6 @@ class AudioTagger:
         except ID3NoHeaderError:
             tags = ID3()
 
-        # 1. Text metadata frames (Strict UTF-8 encoding=3)
         tags.setall("TIT2", [TIT2(encoding=3, text=meta.title)])
         artist_list = split_artists(meta.artist) or [meta.artist]
         tags.setall("TPE1", [TPE1(encoding=3, text=artist_list)])
@@ -240,7 +240,6 @@ class AudioTagger:
         if meta.genre:
             tags.setall("TCON", [TCON(encoding=3, text=meta.genre)])
 
-        # 2. Lyrics (USLT plain text and SYLT synchronized events)
         plain_lyrics = meta.lyrics or (strip_lrc_timestamps(meta.synced_lyrics) if meta.synced_lyrics else None)
         if plain_lyrics:
             tags.setall("USLT", [USLT(encoding=3, lang="eng", desc="", text=plain_lyrics)])
@@ -252,22 +251,68 @@ class AudioTagger:
             if save_lrc:
                 save_lrc_sidecar(p, meta.synced_lyrics)
 
-        # 3. Cover Art (APIC Frame, type 3 Front Cover)
         if meta.cover_bytes:
             mime = meta.cover_mime or detect_image_mime(meta.cover_bytes)
             tags.setall("APIC", [APIC(
                 encoding=3,
                 mime=mime,
-                type=3,  # Front cover
+                type=3,
                 desc="Cover",
                 data=meta.cover_bytes,
             )])
             if save_cover:
                 save_cover_file(p.parent, meta.cover_bytes)
 
-        # 4. Commit to disk using ID3v2.4 standard
         tags.save(p, v2_version=4)
         logger.info("Successfully tagged MP3 with ID3v2.4: %s", p)
+
+    @staticmethod
+    def tag_m4a(
+        file_path: Union[Path, str],
+        meta: TrackMetadata,
+        save_cover: bool = True,
+        save_lrc: bool = True,
+    ) -> None:
+        """Tags an M4A/AAC (MP4 container) audio file."""
+        p = Path(file_path)
+        if not p.is_file():
+            raise FileNotFoundError(f"Audio file not found: {p}")
+
+        audio = MP4(p)
+
+        audio["\xa9nam"] = [meta.title]
+        audio["\xa9ART"] = [meta.artist]
+        audio["\xa9alb"] = [meta.album]
+        album_artist = meta.album_artist or meta.artist
+        audio["aART"] = [album_artist]
+
+        track_num = meta.track_number or 1
+        track_total = meta.total_tracks or 0
+        audio["trkn"] = [(track_num, track_total)]
+
+        disc_num = meta.disc_number or 1
+        disc_total = meta.total_discs or 0
+        audio["disk"] = [(disc_num, disc_total)]
+
+        if meta.year:
+            audio["\xa9day"] = [str(meta.year)]
+        if meta.genre:
+            audio["\xa9gen"] = [meta.genre]
+
+        plain_lyrics = meta.lyrics or (strip_lrc_timestamps(meta.synced_lyrics) if meta.synced_lyrics else None)
+        if plain_lyrics:
+            audio["\xa9lyr"] = [plain_lyrics]
+        if meta.synced_lyrics and save_lrc:
+            save_lrc_sidecar(p, meta.synced_lyrics)
+
+        if meta.cover_bytes:
+            fmt = MP4Cover.FORMAT_PNG if meta.cover_bytes.startswith(b"\x89PNG") else MP4Cover.FORMAT_JPEG
+            audio["covr"] = [MP4Cover(meta.cover_bytes, imageformat=fmt)]
+            if save_cover:
+                save_cover_file(p.parent, meta.cover_bytes)
+
+        audio.save()
+        logger.info("Successfully tagged M4A with MP4 atoms: %s", p)
 
     @staticmethod
     def tag_flac(
@@ -283,7 +328,6 @@ class AudioTagger:
 
         audio = FLAC(p)
 
-        # 1. Vorbis comments (UTF-8 by specification)
         audio["title"] = meta.title
         artist_list = split_artists(meta.artist) or [meta.artist]
         audio["artist"] = artist_list
@@ -300,7 +344,6 @@ class AudioTagger:
         if meta.genre:
             audio["genre"] = meta.genre
 
-        # 2. Lyrics
         plain_lyrics = meta.lyrics or (strip_lrc_timestamps(meta.synced_lyrics) if meta.synced_lyrics else None)
         if meta.synced_lyrics:
             audio["lyrics"] = meta.synced_lyrics
@@ -311,11 +354,10 @@ class AudioTagger:
         elif plain_lyrics:
             audio["lyrics"] = plain_lyrics
 
-        # 3. Cover Art (Picture Block)
         if meta.cover_bytes:
             mime = meta.cover_mime or detect_image_mime(meta.cover_bytes)
             pic = Picture()
-            pic.type = 3  # Front cover
+            pic.type = 3
             pic.mime = mime
             pic.desc = "Front Cover"
             pic.data = meta.cover_bytes
@@ -339,9 +381,7 @@ class AudioTagger:
         save_cover: bool = True,
         save_lrc: bool = True,
     ) -> None:
-        """Universal entrypoint satisfying the PROJECT.md § 123 contract:
-        embed_metadata(path, track, lyrics, cover_bytes).
-        """
+        """Universal entrypoint for metadata embedding."""
         p = Path(file_path)
         meta = coerce_metadata(track, lyrics=lyrics, cover_bytes=cover_bytes)
         ext = p.suffix.lower()
@@ -350,5 +390,7 @@ class AudioTagger:
             cls.tag_mp3(p, meta, save_cover=save_cover, save_lrc=save_lrc)
         elif ext == ".flac":
             cls.tag_flac(p, meta, save_cover=save_cover, save_lrc=save_lrc)
+        elif ext in (".m4a", ".mp4", ".aac"):
+            cls.tag_m4a(p, meta, save_cover=save_cover, save_lrc=save_lrc)
         else:
-            raise ValueError(f"Unsupported audio container format: '{ext}'. Supported: .mp3, .flac")
+            raise ValueError(f"Unsupported audio container format: '{ext}'. Supported: .mp3, .flac, .m4a")
