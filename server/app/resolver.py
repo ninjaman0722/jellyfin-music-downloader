@@ -194,56 +194,61 @@ class SpotifyMetadataExtractor:
         client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
         refresh_token = os.environ.get("SPOTIFY_REFRESH_TOKEN", "").strip()
 
-        if not client_id or not client_secret:
-            logger.warning("SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET not configured; unable to paginate past 100 tracks")
-            return []
-
-        # 1. Request Bearer Token (using Refresh Token if present for user playlist access)
-        auth_bytes = f"{client_id}:{client_secret}".encode("utf-8")
-        b64_auth = base64.b64encode(auth_bytes).decode("utf-8")
-
-        if refresh_token:
-            token_payload = urllib.parse.urlencode({
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            }).encode("utf-8")
-        else:
-            token_payload = b"grant_type=client_credentials"
-
-        token_req = urllib.request.Request(
-            "https://accounts.spotify.com/api/token",
-            data=token_payload,
-            headers={
-                "Authorization": f"Basic {b64_auth}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
-
         token = None
-        try:
-            with urllib.request.urlopen(token_req, timeout=10) as resp:
-                token_data = json.loads(resp.read().decode("utf-8"))
-                token = token_data.get("access_token")
-        except Exception as exc:
-            logger.error("Failed to authenticate with Spotify API: %s", exc)
+
+        # 1. Prefer official credentials if configured
+        if client_id and client_secret:
+            try:
+                auth_bytes = f"{client_id}:{client_secret}".encode("utf-8")
+                b64_auth = base64.b64encode(auth_bytes).decode("utf-8")
+                payload = (
+                    urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode("utf-8")
+                    if refresh_token else b"grant_type=client_credentials"
+                )
+                t_req = urllib.request.Request(
+                    "https://accounts.spotify.com/api/token",
+                    data=payload,
+                    headers={"Authorization": f"Basic {b64_auth}", "Content-Type": "application/x-www-form-urlencoded"},
+                )
+                with urllib.request.urlopen(t_req, timeout=10) as resp:
+                    token = json.loads(resp.read().decode("utf-8")).get("access_token")
+            except Exception as exc:
+                logger.warning("Official Spotify auth failed, falling back to anonymous token: %s", exc)
+
+        # 2. Fallback: Acquire anonymous web player token
+        if not token:
+            try:
+                anon_req = urllib.request.Request(
+                    "https://open.spotify.com/get_access_token?reason=transport&productType=web_player",
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"},
+                )
+                with urllib.request.urlopen(anon_req, timeout=10) as resp:
+                    token = json.loads(resp.read().decode("utf-8")).get("accessToken")
+                    if token:
+                        logger.info("Acquired anonymous Spotify Web Player token for pagination")
+            except Exception as exc:
+                logger.error("Failed to acquire anonymous Spotify token: %s", exc)
+                return []
+
+        if not token:
+            logger.error("No Spotify token available; pagination aborted")
             return []
 
-        # 2. Page through remaining tracks
+        # 3. Paginate remaining tracks via Web API
         extra_tracks: List[ResolveTrack] = []
         offset = start_offset
         track_idx = start_offset + 1
-        max_tracks = 5000
-
-        api_headers = {
+        headers = {
             "Authorization": f"Bearer {token}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Accept": "application/json",
         }
 
-        while offset < max_tracks:
-            api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/items?offset={offset}&limit=100"
-            api_req = urllib.request.Request(api_url, headers=api_headers)
+        while offset < 5000:
+            api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?offset={offset}&limit=100"
+            req = urllib.request.Request(api_url, headers=headers)
             try:
-                with urllib.request.urlopen(api_req, timeout=12) as resp:
+                with urllib.request.urlopen(req, timeout=12) as resp:
                     page_data = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as http_err:
                 if http_err.code == 429:
@@ -302,6 +307,146 @@ class SpotifyMetadataExtractor:
             if not page_data.get("next"):
                 break
             offset += len(items)
+
+        return extra_tracks
+
+        # 2. Fallback: Public Embed Pagination (no API credentials needed)
+        logger.info("Using public embed pagination fallback for playlist %s at offset %d", playlist_id, offset)
+        while offset < 5000:
+            embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}?offset={offset}"
+            req = urllib.request.Request(
+                embed_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    )
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    html = resp.read().decode("utf-8")
+            except Exception as exc:
+                logger.warning("Failed to fetch embed page at offset %d: %s", offset, exc)
+                break
+
+            m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
+            if not m:
+                break
+
+            try:
+                data = json.loads(m.group(1))
+                entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
+                raw_track_list = entity.get("trackList", [])
+            except Exception:
+                break
+
+            if not raw_track_list:
+                break
+
+            fetched_count = 0
+            for item in raw_track_list:
+                t_title = unicodedata.normalize("NFKC", str(item.get("title") or f"Track {track_idx}")).strip()
+                t_artist = unicodedata.normalize("NFKC", str(item.get("subtitle") or playlist_name)).strip()
+                t_uri = item.get("uri") or f"t_{playlist_id}_{track_idx}"
+                track_id = t_uri.split(":")[-1]
+                t_dur = float(item.get("duration") or 180000.0)
+
+                if any(tr.id == f"t_{track_id}" for tr in extra_tracks):
+                    continue
+
+                extra_tracks.append(
+                    ResolveTrack(
+                        id=f"t_{track_id}",
+                        title=t_title,
+                        artist=t_artist,
+                        album=playlist_name,
+                        disc_number=1,
+                        track_number=track_idx,
+                        duration_ms=t_dur,
+                        exists_locally=False,
+                        local_path=None,
+                        source_playlist_name=playlist_name,
+                    )
+                )
+                track_idx += 1
+                fetched_count += 1
+
+            if fetched_count == 0 or len(raw_track_list) < 100:
+                break
+            offset += len(raw_track_list)
+
+        return extra_tracks
+
+        # Fallback: Public Embed Pagination (no API credentials needed)
+        logger.info("Using public embed pagination fallback for playlist %s at offset %d", playlist_id, offset)
+        while offset < 5000:
+            embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}?offset={offset}"
+            req = urllib.request.Request(
+                embed_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    )
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    html = resp.read().decode("utf-8")
+            except Exception as exc:
+                logger.warning("Failed to fetch embed page at offset %d: %s", offset, exc)
+                break
+
+            m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
+            if not m:
+                break
+
+            try:
+                data = json.loads(m.group(1))
+                entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
+                raw_track_list = entity.get("trackList", [])
+            except Exception:
+                break
+
+            if not raw_track_list:
+                break
+
+            fetched_count = 0
+            for item in raw_track_list:
+                # Avoid duplicates if offset overlaps
+                t_title = unicodedata.normalize("NFKC", str(item.get("title") or f"Track {track_idx}")).strip()
+                t_artist = unicodedata.normalize("NFKC", str(item.get("subtitle") or playlist_name)).strip()
+                t_uri = item.get("uri") or f"t_{playlist_id}_{track_idx}"
+                track_id = t_uri.split(":")[-1]
+                t_dur = float(item.get("duration") or 180000.0)
+
+                # Check if we already added this track ID
+                if any(tr.id == f"t_{track_id}" for tr in extra_tracks):
+                    continue
+
+                extra_tracks.append(
+                    ResolveTrack(
+                        id=f"t_{track_id}",
+                        title=t_title,
+                        artist=t_artist,
+                        album=playlist_name,
+                        disc_number=1,
+                        track_number=track_idx,
+                        duration_ms=t_dur,
+                        exists_locally=False,
+                        local_path=None,
+                        source_playlist_name=playlist_name,
+                    )
+                )
+                track_idx += 1
+                fetched_count += 1
+
+            if fetched_count == 0 or len(raw_track_list) < 100:
+                break
+            offset += len(raw_track_list)
 
         return extra_tracks
 

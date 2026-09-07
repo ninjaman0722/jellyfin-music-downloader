@@ -223,3 +223,27 @@ pytest -v
 
 ## 📄 License
 MIT License. Built for the Omarchy Linux and Jellyfin community.
+
+
+## Spotify Large Playlist Support (>100 Tracks)
+
+Playlists under 100 tracks resolve automatically without credentials. Playlists with more than 100 tracks require Spotify authentication to paginate beyond the initial batch.
+
+Add either Spotify Developer credentials or a web session cookie to your `.env` file:
+
+### Option 1: Developer API Credentials (Recommended)
+1. Create an app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
+2. Add `http://127.0.0.1:8888/callback` under **Redirect URIs** in the app settings.
+3. Authorize your account with the `playlist-read-private playlist-read-collaborative` scopes to acquire a refresh token.
+4. Set the following in `.env`:
+```env
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_CLIENT_SECRET=your_client_secret
+SPOTIFY_REFRESH_TOKEN=your_refresh_token
+```
+
+### Option 2: Web Session Cookie (`sp_dc`)
+Extract the `sp_dc` cookie from browser developer tools while logged into `open.spotify.com` and set:
+```env
+SPOTIFY_SP_DC=your_sp_dc_cookie
+```
