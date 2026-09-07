@@ -1,19 +1,20 @@
 """server/app/resolver.py
 Pre-Flight URL Metadata Resolver and Sub-20ms Diff Engine.
-
-Provides:
-- URL classification for Spotify and YouTube Music streams.
-- Metadata extraction into typed ResolveTrack models.
-- High-speed in-memory diffing against LibraryIndex (<20ms benchmark).
-- Partitioning into existing vs missing tracks for the Stage 2 downloader queue.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
+import os
 import re
 import time
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from enum import Enum
 from typing import Any, Dict, List, Optional, Protocol, Tuple
@@ -36,7 +37,6 @@ class URLType(str, Enum):
 
 
 def detect_url_type(url: str) -> URLType:
-    """Classify incoming streaming media URL."""
     if not url:
         return URLType.UNKNOWN
 
@@ -61,7 +61,6 @@ def detect_url_type(url: str) -> URLType:
 
 
 class ResolveTrack(BaseModel):
-    """Metadata for an individual resolved track matching main.py schema."""
     id: str = Field(default_factory=lambda: f"t_{uuid.uuid4().hex[:8]}")
     title: str = "Track"
     artist: str = "Artist"
@@ -75,14 +74,12 @@ class ResolveTrack(BaseModel):
 
 
 class ResolveRequest(BaseModel):
-    """Request payload for POST /api/resolve."""
     urls: List[str] = Field(..., min_length=1, description="Playlist or track URLs to resolve")
     target_user_id: Optional[str] = None
     artist_mode: str = Field(default="discography", description="Artist resolution mode: 'discography' or 'top_tracks'")
 
 
 class ResolveResponse(BaseModel):
-    """Response payload for POST /api/resolve."""
     playlist_name: str = "Resolved Playlist"
     playlist_id: str = "pl-resolved-01"
     is_playlist: bool = False
@@ -96,16 +93,11 @@ class ResolveResponse(BaseModel):
 
 
 class MetadataExtractor(Protocol):
-    """Interface protocol for extracting track metadata from URLs without downloading."""
-
     async def extract_tracks(self, url: str, artist_mode: str = "discography") -> Tuple[Optional[str], str, List[ResolveTrack]]:
-        """Return (playlist_name, playlist_id, tracks)."""
         ...
 
 
 class YtDlpMetadataExtractor:
-    """Metadata extraction engine utilizing yt-dlp flat-playlist extraction."""
-
     async def extract_tracks(self, url: str, artist_mode: str = "discography") -> Tuple[str, str, List[ResolveTrack]]:
         try:
             import yt_dlp
@@ -192,47 +184,51 @@ class YtDlpMetadataExtractor:
 
 
 class SpotifyMetadataExtractor:
-    """Fast, zero-credential metadata extraction engine for Spotify playlists, albums, artists, and tracks.
-
-    Fetches public embed metadata and catalog releases in sub-second times.
-    Requires no Spotify API credentials or SpotDL authentication.
-    """
     def _fetch_remaining_playlist_tracks(
         self,
         playlist_id: str,
         playlist_name: str,
         start_offset: int = 100,
     ) -> List[ResolveTrack]:
-        """Fetch tracks beyond the 100-track embed limit using Spotify's web player token."""
-        import json
-        import urllib.error
-        import urllib.request
-        import unicodedata
+        client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
+        refresh_token = os.environ.get("SPOTIFY_REFRESH_TOKEN", "").strip()
 
-        token_url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
-        token_headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
-            "Accept": "application/json",
-            "Referer": "https://open.spotify.com/",
-            "Origin": "https://open.spotify.com",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-        }
-        token_req = urllib.request.Request(token_url, headers=token_headers)
+        if not client_id or not client_secret:
+            logger.warning("SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET not configured; unable to paginate past 100 tracks")
+            return []
+
+        # 1. Request Bearer Token (using Refresh Token if present for user playlist access)
+        auth_bytes = f"{client_id}:{client_secret}".encode("utf-8")
+        b64_auth = base64.b64encode(auth_bytes).decode("utf-8")
+
+        if refresh_token:
+            token_payload = urllib.parse.urlencode({
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            }).encode("utf-8")
+        else:
+            token_payload = b"grant_type=client_credentials"
+
+        token_req = urllib.request.Request(
+            "https://accounts.spotify.com/api/token",
+            data=token_payload,
+            headers={
+                "Authorization": f"Basic {b64_auth}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+
         token = None
         try:
             with urllib.request.urlopen(token_req, timeout=10) as resp:
                 token_data = json.loads(resp.read().decode("utf-8"))
-                token = token_data.get("accessToken")
+                token = token_data.get("access_token")
         except Exception as exc:
-            logger.warning("Failed to fetch anonymous Spotify access token: %s", exc)
+            logger.error("Failed to authenticate with Spotify API: %s", exc)
             return []
 
-        if not token:
-            logger.warning("Spotify access token was empty")
-            return []
-
+        # 2. Page through remaining tracks
         extra_tracks: List[ResolveTrack] = []
         offset = start_offset
         track_idx = start_offset + 1
@@ -240,18 +236,11 @@ class SpotifyMetadataExtractor:
 
         api_headers = {
             "Authorization": f"Bearer {token}",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
             "Accept": "application/json",
-            "Referer": "https://open.spotify.com/",
-            "Origin": "https://open.spotify.com",
-            "App-Platform": "WebPlayer",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
         }
 
         while offset < max_tracks:
-            api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?offset={offset}&limit=100"
+            api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/items?offset={offset}&limit=100"
             api_req = urllib.request.Request(api_url, headers=api_headers)
             try:
                 with urllib.request.urlopen(api_req, timeout=12) as resp:
@@ -262,7 +251,7 @@ class SpotifyMetadataExtractor:
                     logger.warning("Spotify 429 hit; sleeping %ds...", retry_after)
                     time.sleep(retry_after)
                     continue
-                logger.warning("HTTP error %d at offset %d: %s", http_err.code, offset, http_err)
+                logger.warning("Spotify API error %d at offset %d: %s", http_err.code, offset, http_err)
                 break
             except Exception as exc:
                 logger.warning("Failed to fetch Spotify tracks at offset %d: %s", offset, exc)
@@ -273,7 +262,7 @@ class SpotifyMetadataExtractor:
                 break
 
             for item in items:
-                t = item.get("track")
+                t = item.get("track") or item.get("item")
                 if not t or not isinstance(t, dict):
                     continue
 
@@ -309,16 +298,15 @@ class SpotifyMetadataExtractor:
             offset += len(items)
 
         return extra_tracks
+
     async def _extract_artist_discography(
         self,
         artist_id: str,
         original_url: str,
     ) -> Optional[Tuple[str, str, List[ResolveTrack]]]:
-        """Scrape artist discography (all albums, singles, EPs) and return deduplicated tracks."""
         loop = asyncio.get_running_loop()
 
         def _fetch_artist_page() -> str:
-            import urllib.request
             req = urllib.request.Request(
                 f"https://open.spotify.com/artist/{artist_id}",
                 headers={"User-Agent": "curl/7.88.1"},
@@ -332,25 +320,19 @@ class SpotifyMetadataExtractor:
             logger.warning("Failed to fetch Spotify artist page for '%s': %s", artist_id, exc)
             return None
 
-        import json
-        import unicodedata
-
         m_title = re.search(r'<meta\s+(?:property|name)="og:title"\s+content="([^"]+)"', page_html)
         if not m_title:
             m_title = re.search(r"<title>(.*?)(?: \| Spotify)?</title>", page_html)
         raw_artist_name = m_title.group(1).split(" | ")[0].strip() if m_title else "Artist"
         artist_name = unicodedata.normalize("NFKC", str(raw_artist_name)).strip()
 
-        # Separate artist's own releases from "Appears On" third-party compilations
         pos_appears_on = page_html.find("Appears On")
         artist_section = page_html[:pos_appears_on] if pos_appears_on != -1 else page_html
 
         album_ids = list(dict.fromkeys(re.findall(r"/album/([a-zA-Z0-9]{22})", artist_section)))
         if not album_ids:
-            # Fallback to whole page if no albums found before "Appears On"
             album_ids = list(dict.fromkeys(re.findall(r"/album/([a-zA-Z0-9]{22})", page_html)))
         if not album_ids:
-            logger.info("No album IDs found on artist page for '%s', falling back to top tracks embed", artist_id)
             return None
 
         playlist_name = f"{artist_name} (Discography)"
@@ -359,7 +341,6 @@ class SpotifyMetadataExtractor:
         sem = asyncio.Semaphore(8)
 
         def _fetch_album_embed(aid: str) -> Tuple[Optional[str], List[dict]]:
-            import urllib.request
             url = f"https://open.spotify.com/embed/album/{aid}"
             req = urllib.request.Request(url, headers={"User-Agent": "curl/7.88.1"})
             try:
@@ -392,7 +373,6 @@ class SpotifyMetadataExtractor:
                 t_title = unicodedata.normalize("NFKC", str(item.get("title") or f"Track {track_idx}")).strip()
                 t_artist = unicodedata.normalize("NFKC", str(item.get("subtitle") or artist_name)).strip()
 
-                # Filter out tracks by other artists on compilation or multi-artist releases
                 if not artists_match(t_artist, artist_name):
                     continue
 
@@ -421,12 +401,6 @@ class SpotifyMetadataExtractor:
                 )
                 track_idx += 1
 
-        logger.info(
-            "Resolved Spotify artist discography for '%s': %d tracks across %d releases",
-            artist_name,
-            len(tracks),
-            len(album_ids),
-        )
         return playlist_name, playlist_id, tracks
 
     async def extract_tracks(
@@ -436,7 +410,6 @@ class SpotifyMetadataExtractor:
     ) -> Tuple[Optional[str], str, List[ResolveTrack]]:
         clean_match = re.search(r'(playlist|album|artist|track)[/:]([a-zA-Z0-9]+)', url)
         if not clean_match:
-            logger.warning("Could not parse Spotify entity type and ID from '%s'", url)
             return YtDlpMetadataExtractor._fallback_track(url)
 
         entity_type = clean_match.group(1).lower()
@@ -450,7 +423,6 @@ class SpotifyMetadataExtractor:
         loop = asyncio.get_running_loop()
 
         def _fetch_page(sid: str) -> str:
-            import urllib.request
             target_embed = f"https://open.spotify.com/embed/{entity_type}/{sid}"
             req = urllib.request.Request(
                 target_embed,
@@ -484,17 +456,13 @@ class SpotifyMetadataExtractor:
                 logger.debug("Attempt for %s failed: %s", cid, exc)
 
         if not html:
-            logger.warning("Spotify embed data missing or returned 404 for '%s'", url)
             return YtDlpMetadataExtractor._fallback_track(url)
 
         match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
         if not match:
-            logger.warning("Spotify embed data missing __NEXT_DATA__ for '%s'", url)
             return YtDlpMetadataExtractor._fallback_track(url)
 
         try:
-            import json
-            import unicodedata
             data = json.loads(match.group(1))
             props = data.get("props", {}).get("pageProps", {})
             state_data = props.get("state", {}).get("data", {})
@@ -509,7 +477,6 @@ class SpotifyMetadataExtractor:
             tracks: List[ResolveTrack] = []
 
             if entity_type == "track":
-                # Single loose track
                 artists_list = entity.get("artists", [])
                 art_str = ", ".join(a.get("name", "") for a in artists_list if a.get("name")) or entity.get("subtitle") or "Unknown Artist"
                 clean_artist = unicodedata.normalize("NFKC", str(art_str)).strip()
@@ -531,7 +498,6 @@ class SpotifyMetadataExtractor:
                 )
                 return None, playlist_id, tracks
 
-            # Playlist, Album, or Artist
             raw_track_list = entity.get("trackList", [])
             for idx, item in enumerate(raw_track_list, start=1):
                 t_title = unicodedata.normalize("NFKC", str(item.get("title") or f"Track {idx}")).strip()
@@ -555,7 +521,6 @@ class SpotifyMetadataExtractor:
                     )
                 )
 
-            # Paginate Spotify Web API if playlist exceeds the 100-item embed cap
             if entity_type == "playlist" and len(raw_track_list) >= 100:
                 logger.info("Spotify playlist '%s' has 100+ tracks; fetching remaining pages...", clean_title)
                 try:
@@ -572,7 +537,6 @@ class SpotifyMetadataExtractor:
                 except Exception as exc:
                     logger.warning("Failed to paginate remaining playlist tracks: %s", exc)
 
-            logger.info("Successfully resolved Spotify %s '%s' (%d tracks)", entity_type, clean_title, len(tracks))
             return clean_title, playlist_id, tracks
 
         except Exception as exc:
@@ -581,8 +545,6 @@ class SpotifyMetadataExtractor:
 
 
 class CompositeMetadataExtractor:
-    """Smart router dispatching Spotify URLs to SpotifyMetadataExtractor and YouTube to YtDlpMetadataExtractor."""
-
     def __init__(self):
         self.spotify_extractor = SpotifyMetadataExtractor()
         self.ytdlp_extractor = YtDlpMetadataExtractor()
@@ -602,8 +564,6 @@ class CompositeMetadataExtractor:
 
 
 class MockMetadataExtractor:
-    """Mock extractor for offline testing and fixture injection."""
-
     def __init__(self, tracks: Optional[List[ResolveTrack]] = None, playlist_name: str = "Mock Playlist"):
         self.tracks = tracks or []
         self.playlist_name = playlist_name
@@ -614,18 +574,14 @@ class MockMetadataExtractor:
         artist_mode: str = "discography",
     ) -> Tuple[str, str, List[ResolveTrack]]:
         pl_id = f"pl-mock-{uuid.uuid4().hex[:6]}"
-        copied = []
-        for t in self.tracks:
-            c = t.model_copy()
+        copied = [t.model_copy() for t in self.tracks]
+        for c in copied:
             if not c.source_playlist_name:
                 c.source_playlist_name = self.playlist_name
-            copied.append(c)
         return self.playlist_name, pl_id, copied
 
 
 class Resolver:
-    """Pre-flight URL metadata resolution and sub-20ms diff engine."""
-
     def __init__(
         self,
         indexer: LibraryIndex,
@@ -641,9 +597,7 @@ class Resolver:
         playlist_id: str = "pl-01",
         is_playlist: Optional[bool] = None,
     ) -> ResolveResponse:
-        """Diff a list of resolved tracks against the in-memory LibraryIndex in <20ms (<5ms typical)."""
         start_time = time.perf_counter()
-
         existing_count = 0
         missing_count = 0
 
@@ -696,7 +650,6 @@ class Resolver:
         target_user_id: Optional[str] = None,
         artist_mode: str = "discography",
     ) -> ResolveResponse:
-        """Asynchronously resolve URL metadata and diff against the library index."""
         if not urls:
             raise ValueError("urls list cannot be empty")
 

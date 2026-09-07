@@ -589,6 +589,7 @@ class JellyfinClient:
             "Ids": item_ids or [],
             "UserId": user_id,
             "MediaType": "Audio",
+            "IsPublic": False,
         }
         params = {
             "name": clean_name,
@@ -603,6 +604,17 @@ class JellyfinClient:
                 "Playlist creation succeeded but response lacked 'Id'",
                 response_text=resp.text,
             )
+
+        if user_id:
+            try:
+                await self._request(
+                    "POST",
+                    f"/Playlists/{playlist_id}/Users/{user_id}",
+                    json_body={"UserId": user_id, "CanEdit": True},
+                )
+            except Exception as exc:
+                logger.debug("Optional user restriction endpoint returned: %s", exc)
+
         return playlist_id
 
     async def create_or_get_playlist(

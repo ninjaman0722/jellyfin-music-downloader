@@ -111,6 +111,7 @@ class ResolveResponse(BaseModel):
 class IngestRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, description="Streaming playlist or track URLs")
     user_id: Optional[str] = Field(default=None, description="Jellyfin user ID (optional for library ingest)")
+    target_user_id: Optional[str] = None
     playlist_name: str = Field(default="Downloads", description="Target playlist name in Jellyfin")
     track_ids: Optional[List[str]] = Field(default=None, description="Optional filtered track IDs")
     bitrate: Optional[str] = Field(default="320k", description="Audio bitrate")
@@ -451,7 +452,7 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
             await ws_manager.broadcast(
                 JobStartedEvent(
                     job_id=job_id,
-                    user_id=req.user_id,
+                    user_id=(req.user_id or req.target_user_id),
                     playlist_name="None (Library Only)" if effective_pl_name == "__NO_PLAYLIST__" else (effective_pl_name or "Downloads"),
                     total_tracks=total_tracks,
                     to_download=missing_count,
@@ -635,7 +636,7 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 continue
                             logger.info("[%s] Resolving %d track Item IDs in Jellyfin for playlist '%s'...", job_id, len(grp_tracks), pl_name)
                             item_ids = await jellyfin.resolve_track_item_ids(
-                                user_id=req.user_id,
+                                user_id=(req.user_id or req.target_user_id),
                                 tracks=grp_tracks,
                                 music_dir=settings.music_dir,
                                 music_folder_id=music_folder_id,
@@ -650,13 +651,13 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                     req.user_id,
                                 )
                                 created_pl_id = await jellyfin.create_or_get_playlist(
-                                    user_id=req.user_id,
+                                    user_id=(req.user_id or req.target_user_id),
                                     playlist_name=pl_name,
                                 )
                                 if created_pl_id:
                                     final_playlist_id = created_pl_id
                                     await jellyfin.add_items_to_playlist(
-                                        user_id=req.user_id,
+                                        user_id=(req.user_id or req.target_user_id),
                                         playlist_id=created_pl_id,
                                         item_ids=item_ids,
                                     )
