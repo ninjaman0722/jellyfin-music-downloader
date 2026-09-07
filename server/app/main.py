@@ -536,12 +536,13 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 album=res.album,
                                 audio_duration=res.duration_seconds,
                             )
-                            if lrc_res.has_lyrics() and tagger:
+                            lyrics_text = lrc_res.best_lyrics() if (lrc_res and lrc_res.has_lyrics()) else None
+                            if tagger:
                                 await asyncio.to_thread(
                                     tagger.embed_metadata,
                                     file_path=res.path,
                                     track={"title": res.title, "artist": res.artist, "album": res.album},
-                                    lyrics=lrc_res.best_lyrics(),
+                                    lyrics=lyrics_text,
                                 )
                         except Exception as tag_err:
                             logger.warning("[%s] Tagging failed for %s: %s", job_id, res.title, tag_err)

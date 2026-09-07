@@ -310,6 +310,10 @@ class AudioTagger:
             audio["covr"] = [MP4Cover(meta.cover_bytes, imageformat=fmt)]
             if save_cover:
                 save_cover_file(p.parent, meta.cover_bytes)
+        elif save_cover:
+            cover_path = p.parent / "cover.jpg"
+            if not cover_path.exists() and "covr" in audio and audio["covr"]:
+                save_cover_file(p.parent, bytes(audio["covr"][0]))
 
         audio.save()
         logger.info("Successfully tagged M4A with MP4 atoms: %s", p)
