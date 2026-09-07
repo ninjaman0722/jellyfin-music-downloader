@@ -52,11 +52,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MUSIC_DIR=/music
 
 # Install minimal system runtime dependencies:
-# - ffmpeg: Required for spotdl audio conversion, yt-dlp post-processing, and format transcoding
+# - ffmpeg atomicparsley: Required for spotdl audio conversion, yt-dlp post-processing, and format transcoding
 # - ca-certificates: Required for secure TLS connections to Spotify, YouTube, Jellyfin, and LRCLIB
 # - curl: Required for Docker healthcheck probes against http://localhost:8095/health
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
+    ffmpeg atomicparsley \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
