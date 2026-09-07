@@ -277,12 +277,18 @@ class SpotifyMetadataExtractor:
                 t_dur = float(t.get("duration_ms") or 180000.0)
                 disc_num = int(t.get("disc_number") or 1)
 
+                alb_obj = t.get("album")
+                if isinstance(alb_obj, dict) and alb_obj.get("name"):
+                    t_album = unicodedata.normalize("NFKC", str(alb_obj.get("name"))).strip()
+                else:
+                    t_album = playlist_name
+
                 extra_tracks.append(
                     ResolveTrack(
                         id=f"t_{t_id}",
                         title=t_title,
                         artist=t_artist,
-                        album=playlist_name,
+                        album=t_album,
                         disc_number=disc_num,
                         track_number=track_idx,
                         duration_ms=t_dur,

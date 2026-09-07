@@ -151,6 +151,7 @@ class TrackResult:
     duration_seconds: float = 0.0
     file_size_bytes: int = 0
     was_skipped: bool = False
+    cover_embedded: bool = False
 
 
 class DownloadEngine(str, Enum):
@@ -173,7 +174,7 @@ class Downloader:
         ws_broadcaster: Optional[Any] = None,  # ConnectionManager
         concurrency: int = 4,
         bitrate: str = "320k",
-        format_ext: str = ".m4a",
+        format_ext: str = ".mp3",
         sponsorblock: bool = True,
         per_track_timeout: float = 180.0,
         max_retries: int = 2,
@@ -237,6 +238,7 @@ class Downloader:
             "-x",
             "--audio-format", fmt,
             "--audio-quality", self.bitrate,
+            "--embed-thumbnail",
             "--concurrent-fragments", "4",
             "--no-playlist",
             "--no-part",
@@ -375,6 +377,33 @@ class Downloader:
                     duration_s = track.duration_ms / 1000.0 if track.duration_ms else (time.time() - t0)
                     logger.info("[%s] Successfully downloaded and finalized: %s (%d bytes)", job_id, target_path.name, file_size)
 
+                    is_cover_embedded = False
+                    try:
+                        import mutagen
+                        from mutagen.mp4 import MP4
+                        from mutagen.flac import FLAC
+                        mf = mutagen.File(str(target_path))
+                        if mf:
+                            cov_bytes = None
+                            if isinstance(mf, MP4) and "covr" in mf and mf["covr"]:
+                                is_cover_embedded = True
+                                cov_bytes = bytes(mf["covr"][0])
+                            elif hasattr(mf, "tags") and mf.tags:
+                                apics = [v for k, v in mf.tags.items() if k.startswith("APIC")]
+                                if apics:
+                                    is_cover_embedded = True
+                                    cov_bytes = apics[0].data
+                            elif isinstance(mf, FLAC) and mf.pictures:
+                                is_cover_embedded = True
+                                cov_bytes = mf.pictures[0].data
+
+                            if cov_bytes:
+                                cov_file = target_path.parent / "cover.jpg"
+                                if not cov_file.exists():
+                                    cov_file.write_bytes(cov_bytes)
+                    except Exception as cov_err:
+                        logger.debug("[%s] Cover detection error: %s", job_id, cov_err)
+
                     return TrackResult(
                         track_id=track.id,
                         title=track.title,
@@ -384,6 +413,7 @@ class Downloader:
                         success=True,
                         duration_seconds=duration_s,
                         file_size_bytes=file_size,
+                        cover_embedded=is_cover_embedded,
                     )
                 else:
                     err_raw = (stderr.strip() or stdout.strip())
@@ -560,7 +590,7 @@ class Downloader:
                                         artist=track.artist,
                                         duration=result.duration_seconds,
                                         lyrics_synced=False,
-                                        cover_embedded=False,
+                                        cover_embedded=result.cover_embedded,
                                         path=str(result.path) if result.path else "",
                                     ),
                                     job_id=job_id,
