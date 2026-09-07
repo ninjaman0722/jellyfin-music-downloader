@@ -434,19 +434,29 @@ class JellyfinClient:
             "recursive": "true",
             "sortBy": "SortName",
             "sortOrder": "Ascending",
-            "fields": "ChildCount,OwnerUserId",
+            "fields": "ChildCount,OwnerUserId,OpenAccess",
         }
 
         resp = await self._request("GET", path, params=params)
         data = resp.json()
         items = data.get("Items", [])
 
+        # Household (Shared) only includes playlists with no individual user restrictions
+        if user_id in (HOUSEHOLD_USER_ID, SHARED_USER_ID):
+            async def _has_users(pid: str) -> bool:
+                try:
+                    r = await self._request("GET", f"/Playlists/{pid}/Users")
+                    return len(r.json()) > 0
+                except Exception:
+                    return False
+
+            checks = await asyncio.gather(*[_has_users(it["Id"]) for it in items])
+            items = [it for it, has_u in zip(items, checks) if not has_u]
+
         playlists: List[PlaylistSummary] = []
         for item in items:
             owner = item.get("OwnerUserId")
-            # Multi-User Isolation Filter:
-            # If OwnerUserId is specified, it MUST match user_id or SHARED_USER_ID.
-            if owner and owner != user_id and owner != SHARED_USER_ID:
+            if owner and owner != user_id and owner not in (HOUSEHOLD_USER_ID, SHARED_USER_ID):
                 continue
 
             count = item.get("ChildCount", 0)
