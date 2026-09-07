@@ -441,24 +441,33 @@ class JellyfinClient:
         data = resp.json()
         items = data.get("Items", [])
 
-        # Household (Shared) only includes playlists with no individual user restrictions
-        if user_id in (HOUSEHOLD_USER_ID, SHARED_USER_ID):
-            async def _has_users(pid: str) -> bool:
-                try:
-                    r = await self._request("GET", f"/Playlists/{pid}/Users")
-                    return len(r.json()) > 0
-                except Exception:
-                    return False
+        def _clean_guid(g: str) -> str:
+            return str(g).replace("-", "").strip().lower() if g else ""
 
-            checks = await asyncio.gather(*[_has_users(it["Id"]) for it in items])
-            items = [it for it, has_u in zip(items, checks) if not has_u]
+        async def _fetch_playlist_users(pid: str):
+            try:
+                r = await self._request("GET", f"/Playlists/{pid}/Users")
+                data = r.json()
+                user_list = data if isinstance(data, list) else data.get("Users", [])
+                user_ids = [_clean_guid(u.get("UserId") or u.get("Id")) for u in user_list if isinstance(u, dict)]
+                return pid, [uid for uid in user_ids if uid]
+            except Exception:
+                return pid, []
+
+        user_lookups = await asyncio.gather(*[_fetch_playlist_users(it["Id"]) for it in items])
+        pl_user_map = dict(user_lookups)
+        clean_target = _clean_guid(user_id)
+
+        if clean_target in (_clean_guid(HOUSEHOLD_USER_ID), _clean_guid(SHARED_USER_ID), ""):
+            # Household only includes playlists with no user restrictions (public)
+            items = [it for it in items if not pl_user_map.get(it["Id"])]
+        else:
+            # User badges strictly count personal playlists bound to this user
+            items = [it for it in items if clean_target in pl_user_map.get(it["Id"], [])]
 
         playlists: List[PlaylistSummary] = []
         for item in items:
             owner = item.get("OwnerUserId")
-            if owner and owner != user_id and owner not in (HOUSEHOLD_USER_ID, SHARED_USER_ID):
-                continue
-
             count = item.get("ChildCount", 0)
             playlists.append(PlaylistSummary(
                 id=item["Id"],
