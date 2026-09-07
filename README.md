@@ -17,7 +17,8 @@ Paste or drag-and-drop Spotify, YouTube Music, or SoundCloud links (playlists, f
 - **🎤 Synchronized Karaoke Lyrics (`.lrc`):** Queries LRCLIB for timestamped lyrics with duration validation ($\pm 3\text{s}$) and embeds them directly into ID3v2.4 tags for seamless playback in Finamp, Feishin, and Jellyfin.
 - **👥 Multi-User Account Scoping & Global Ingest:**
   - Automatically queries Jellyfin user accounts and playlists.
-  - Playlists are created directly under the authenticated user account.
+  - **Strict User Privacy Isolation:** Playlists are created as private (`IsPublic: false`) and locked strictly to the targeted user account (`/Playlists/{id}/Users/{userId}`), preventing playlist clutter across shared household profiles.
+  - Full support for playlists of any size (>100 tracks paginated via Spotify API).
   - Artist discographies, albums, and singles can optionally bypass playlist creation and ingest directly to the server-wide music library (`__NO_PLAYLIST__`).
 - **🐳 Hardened Docker Deployment:** Non-root execution (`appuser`, PUID/PGID), zero-secret public API masking, container healthchecks, and POSIX 0600 configuration hardening.
 - **🧪 Comprehensive Test Suite:** 437 automated unit, integration, stress, and packaging tests.
@@ -92,6 +93,11 @@ Run the backend daemon in Docker on your media server (e.g. Ubuntu Server, Debia
    BITRATE=320k                           # Target MP3 audio bitrate
    PUID=1000                              # Server user ID
    PGID=1000                              # Server group ID
+
+   # Optional: Required for Spotify playlists exceeding 100 tracks
+   SPOTIFY_CLIENT_ID=your_spotify_client_id
+   SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+   SPOTIFY_REFRESH_TOKEN=your_spotify_refresh_token
    ```
 3. Start the daemon:
    ```bash
@@ -187,6 +193,9 @@ Stored at `~/.config/omarchy/extensions/jellyfin-music-app/config.json` (permiss
 | `BITRATE` | `320k` | Output audio bitrate |
 | `LOG_LEVEL` | `INFO` | Application log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `PUID` / `PGID` | `1000` / `1000` | User/Group ID for write permissions on downloaded files |
+| `SPOTIFY_CLIENT_ID` | *optional* | Spotify Developer App Client ID (required for playlists >100 tracks) |
+| `SPOTIFY_CLIENT_SECRET` | *optional* | Spotify Developer App Client Secret |
+| `SPOTIFY_REFRESH_TOKEN` | *optional* | Spotify OAuth user refresh token for paginating extended playlists |
 
 ---
 
