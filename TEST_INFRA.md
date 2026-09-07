@@ -57,7 +57,7 @@ The test suite is structured across four distinct verification tiers:
 ### Tier 1: Feature Verification (Happy Path)
 - **Scope**: Verifies individual components perform their primary function with standard valid inputs.
 - **Key Tests**:
-  - `GET /health` returns HTTP 200 with uptime, version `2.0.0`, and active job count.
+  - `GET /health` returns HTTP 200 with uptime, version `2.1.0`, and active job count.
   - `GET /api/config` returns server paths, bitrates, default user, and Jellyfin URL.
   - `GET /api/users` parses Jellyfin users and private playlists via REST.
   - `POST /api/resolve` partitions a test playlist into existing vs missing tracks.

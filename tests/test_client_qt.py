@@ -56,7 +56,7 @@ class MockDaemonServer:
     """Threaded FastAPI + Uvicorn server providing mock REST and WebSocket endpoints."""
 
     def __init__(self):
-        self.app = FastAPI(title="Mock Media Daemon", version="2.0.0")
+        self.app = FastAPI(title="Mock Media Daemon", version="2.1.0")
         self.recorded_requests: List[Dict[str, Any]] = []
         self.ws_connections: List[WebSocket] = []
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -69,7 +69,7 @@ class MockDaemonServer:
     def _setup_routes(self):
         @self.app.get("/health")
         async def health():
-            return {"status": "healthy", "version": "2.0.0", "uptime_seconds": 120.0, "active_jobs": 0}
+            return {"status": "healthy", "version": "2.1.0", "uptime_seconds": 120.0, "active_jobs": 0}
 
         @self.app.get("/api/config")
         async def config():
@@ -587,7 +587,7 @@ class TestDaemonApiClient:
         client = app.DaemonApiClient(mock_daemon.base_url)
         health = client.get_health()
         assert health["status"] == "healthy"
-        assert health["version"] == "2.0.0"
+        assert health["version"] == "2.1.0"
 
     def test_get_config(self, mock_daemon):
         client = app.DaemonApiClient(mock_daemon.base_url)

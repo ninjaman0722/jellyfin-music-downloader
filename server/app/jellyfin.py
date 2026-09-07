@@ -178,7 +178,7 @@ class JellyfinClient:
     """
 
     CLIENT_NAME = "Jellyfin Music Downloader"
-    CLIENT_VERSION = "2.0.0"
+    CLIENT_VERSION = "2.1.0"
     DEVICE_NAME = "Omarchy Linux"
     DEFAULT_TIMEOUT = 15.0
     CONNECT_TIMEOUT = 5.0

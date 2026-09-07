@@ -106,7 +106,7 @@ Run the backend daemon in Docker on your media server (e.g. Ubuntu Server, Debia
 4. Verify the server is running:
    ```bash
    curl http://localhost:8095/health
-   # Returns: {"status":"healthy","version":"2.0.0",...}
+   # Returns: {"status":"healthy","version":"2.1.0",...}
    ```
 
 #### Step 2: Install the Client on Your Desktop (Omarchy / Linux)

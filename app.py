@@ -1277,7 +1277,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.users_worker.start()
 
     def on_health_ok(self, data: Dict[str, Any]):
-        ver = data.get("version", "2.0.0")
+        ver = data.get("version", "2.1.0")
         jobs = data.get("active_jobs", 0)
         self.daemon_status_badge.setText(f"● Daemon Online v{ver} ({jobs} active)")
         self.daemon_status_badge.setStyleSheet("color: #a3be8c; font-weight: bold;")

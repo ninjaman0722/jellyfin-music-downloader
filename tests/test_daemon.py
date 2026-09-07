@@ -1,7 +1,7 @@
 """Tests for Asynchronous Backend Daemon REST Endpoints (M1 / Tier 1 & Tier 2).
 
 Validates:
-- GET /health: Daemon status, version 2.0.0, uptime, active job metrics
+- GET /health: Daemon status, version 2.1.0, uptime, active job metrics
 - GET /api/config: Runtime configuration, storage directories, Jellyfin URL
 - GET /api/users: Scoped user listing proxy
 - POST /api/resolve: Input validation and playlist pre-flight diff summary
@@ -28,7 +28,7 @@ async def test_healthcheck_endpoint(async_client: httpx.AsyncClient):
     # Core healthcheck invariants per PROJECT.md § 91 & ORIGINAL_REQUEST.md R1
     assert "status" in data, "Missing 'status' in health response"
     assert data["status"] in ("healthy", "ok"), f"Unexpected status value: {data['status']}"
-    assert data.get("version") == "2.0.0", f"Expected version '2.0.0', got {data.get('version')}"
+    assert data.get("version") == "2.1.0", f"Expected version '2.1.0', got {data.get('version')}"
     assert isinstance(data.get("uptime_seconds"), (int, float)), "uptime_seconds must be numeric"
     assert data["uptime_seconds"] >= 0, "uptime_seconds cannot be negative"
     assert isinstance(data.get("active_jobs"), int), "active_jobs must be integer"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import types
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 # Compatibility shim: Ensure imports like 'from server.app.x import y'
 # succeed whether the daemon is executed from the repo root or from within the server package/container.

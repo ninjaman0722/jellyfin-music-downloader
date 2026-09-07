@@ -44,7 +44,7 @@ def create_contract_reference_app() -> FastAPI:
 
     Used when server.app.main is in development or being tested against interface specs.
     """
-    app = FastAPI(title="Jellyfin Music Daemon Reference", version="2.0.0")
+    app = FastAPI(title="Jellyfin Music Daemon Reference", version="2.1.0")
 
     app.state.active_jobs = 0
     app.state.start_time = 1725487200.0
@@ -63,7 +63,7 @@ def create_contract_reference_app() -> FastAPI:
     async def health():
         return {
             "status": "healthy",
-            "version": "2.0.0",
+            "version": "2.1.0",
             "uptime_seconds": 42.0,
             "active_jobs": app.state.active_jobs,
             "library_indexed_tracks": 14250,
@@ -595,7 +595,7 @@ class MockDaemonServer:
     """Ephemeral in-process media daemon server running on a free loopback port."""
 
     def __init__(self):
-        self.app = FastAPI(title="Mock Media Daemon", version="2.0.0")
+        self.app = FastAPI(title="Mock Media Daemon", version="2.1.0")
         self.recorded_requests: List[Dict[str, Any]] = []
         self.ws_connections: List[WebSocket] = []
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -608,7 +608,7 @@ class MockDaemonServer:
     def _setup_routes(self):
         @self.app.get("/health")
         async def health():
-            return {"status": "healthy", "version": "2.0.0", "uptime_seconds": 120.0, "active_jobs": 0}
+            return {"status": "healthy", "version": "2.1.0", "uptime_seconds": 120.0, "active_jobs": 0}
 
         @self.app.get("/api/config")
         async def config():

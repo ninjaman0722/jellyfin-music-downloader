@@ -7,7 +7,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    image: omarchy/jellyfin-music-daemon:2.0.0
+    image: omarchy/jellyfin-music-daemon:2.1.0
     container_name: jellyfin-music-daemon
     restart: unless-stopped
     ports:

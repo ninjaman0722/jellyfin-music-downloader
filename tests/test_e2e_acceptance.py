@@ -2,7 +2,7 @@
 
 Validates the complete end-to-end media daemon lifecycle:
 1. Daemon Startup & Health Probes:
-   - GET /health: 200 OK, version 2.0.0, uptime metrics, active jobs.
+   - GET /health: 200 OK, version 2.1.0, uptime metrics, active jobs.
    - GET /api/config: runtime paths, download threads, zero secret leaks.
    - GET /api/users: user discovery and playlist summary proxy.
 
@@ -119,7 +119,7 @@ class TestDaemonLifecycleAcceptance:
 
     @pytest.mark.asyncio
     async def test_healthcheck_contract(self, async_client: httpx.AsyncClient):
-        """R1 Acceptance: GET /health returns HTTP 200, status ok, version 2.0.0, uptime."""
+        """R1 Acceptance: GET /health returns HTTP 200, status ok, version 2.1.0, uptime."""
         resp = await async_client.get("/health")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         data = resp.json()

@@ -40,7 +40,7 @@ FROM python:3.12.8-slim-bookworm AS runtime
 # Runtime labels following OCI specifications
 LABEL org.opencontainers.image.title="Jellyfin Music Downloader Daemon" \
       org.opencontainers.image.description="Asynchronous media daemon for Spotify/YouTube music downloading and Jellyfin REST synchronization" \
-      org.opencontainers.image.version="2.0.0" \
+      org.opencontainers.image.version="2.1.0" \
       org.opencontainers.image.authors="Omarchy Linux Community" \
       org.opencontainers.image.licenses="MIT"
 

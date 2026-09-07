@@ -656,11 +656,12 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 )
                                 if created_pl_id:
                                     final_playlist_id = created_pl_id
-                                    await jellyfin.add_items_to_playlist(
-                                        user_id=(req.user_id or req.target_user_id),
-                                        playlist_id=created_pl_id,
-                                        item_ids=item_ids,
-                                    )
+                                    for i in range(0, len(item_ids), 50):
+                                        await jellyfin.add_items_to_playlist(
+                                            user_id=(req.user_id or req.target_user_id),
+                                            playlist_id=created_pl_id,
+                                            item_ids=item_ids[i : i + 50],
+                                        )
                                     await ws_manager.broadcast(
                                         LogEvent(
                                             job_id=job_id,

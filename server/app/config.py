@@ -24,7 +24,7 @@ except ImportError:
 
 logger = logging.getLogger("jellyfin_music_daemon.config")
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 
 def default_music_dir() -> Path:
