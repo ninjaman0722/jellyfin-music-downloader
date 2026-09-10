@@ -511,6 +511,7 @@ async def test_ingest_pipeline_stage3_jellyfin_assembly_end_to_end(
         assert call_kwargs["user_id"] == "u-alice-guid"
         assert call_kwargs["playlist_id"] == "jf-pl-real-guid-999"
         assert call_kwargs["item_ids"] == ["jf-item-guid-1", "jf-item-guid-2"]
+        assert call_kwargs.get("deduplicate") is True
 
         # Assert terminal JobCompletedEvent contains real Jellyfin playlist GUID
         completed_events = [e for e in broadcast_events if getattr(e, "event", None) == "job_completed"]

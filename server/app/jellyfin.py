@@ -738,6 +738,9 @@ class JellyfinClient:
         if deduplicate:
             existing_ids = set(await self.get_playlist_items(actual_user_id, actual_pl_id))
             target_ids = [cid for cid in target_ids if cid not in existing_ids]
+            skipped_count = len(actual_items) - len(target_ids)
+            if skipped_count > 0:
+                logger.info("Deduplication skipped %d track(s) already in playlist %s", skipped_count, actual_pl_id)
             if not target_ids:
                 logger.info("All %d tracks already exist in playlist %s; skipping append.", len(actual_items), actual_pl_id)
                 return True
