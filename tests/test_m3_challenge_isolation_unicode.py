@@ -659,6 +659,17 @@ class TestNonAsciiTrackResolution:
         assert bob_entry["playlists"][0]["id"] == "pl-bob-fav"
         assert bob_entry["playlists"][0]["name"] == "Favorites"
 
+        # Verify modern Jellyfin 12 Authorization: MediaBrowser Token header works identically
+        app.state.jellyfin = JellyfinClient(base_url="http://mock-jellyfin:8096", token="tok")
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                resp_modern = await client.get("/api/users", headers={"Authorization": 'MediaBrowser Client="Test", Device="PC", Token="tok"'})
+        finally:
+            app.state.jellyfin = orig_jf
+        assert resp_modern.status_code == 200
+        assert len(resp_modern.json()["users"]) == 3
+
     @pytest.mark.asyncio
     async def test_get_user_playlists_empty_or_none_user_id_returns_empty_list(
         self, jf_client: JellyfinClient

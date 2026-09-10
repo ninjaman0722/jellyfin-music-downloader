@@ -779,7 +779,18 @@ async def post_cancel(req: CancelRequest, request: Request):
 @app.get("/api/users", response_model=UsersResponse, summary="Jellyfin User & Scoped Playlist Proxy")
 async def get_users(request: Request, settings: ServerConfig = Depends(get_settings)):
     jellyfin: Optional[JellyfinClient] = getattr(request.app.state, "jellyfin", None)
-    token = request.headers.get("X-Emby-Token") or settings.jellyfin_token
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if "Token=" in auth_header:
+        try:
+            token = auth_header.split('Token="')[1].split('"')[0]
+        except IndexError:
+            pass
+    elif auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+
+    if not token:
+        token = request.headers.get("X-Emby-Token") or settings.jellyfin_token
     base_url = settings.jellyfin_url.rstrip("/")
 
     is_mock = jellyfin is not None and (hasattr(jellyfin, "assert_called") or hasattr(jellyfin, "return_value") or hasattr(jellyfin, "mock"))
