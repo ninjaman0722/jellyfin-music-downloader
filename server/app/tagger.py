@@ -262,6 +262,12 @@ class AudioTagger:
             )])
             if save_cover:
                 save_cover_file(p.parent, meta.cover_bytes)
+        elif save_cover:
+            cover_path = p.parent / "cover.jpg"
+            if not cover_path.exists():
+                apics = [v for k, v in tags.items() if k.startswith("APIC")]
+                if apics and getattr(apics[0], "data", None):
+                    save_cover_file(p.parent, apics[0].data)
 
         tags.save(p, v2_version=4)
         logger.info("Successfully tagged MP3 with ID3v2.4: %s", p)
@@ -371,6 +377,10 @@ class AudioTagger:
 
             if save_cover:
                 save_cover_file(p.parent, meta.cover_bytes)
+        elif save_cover:
+            cover_path = p.parent / "cover.jpg"
+            if not cover_path.exists() and audio.pictures:
+                save_cover_file(p.parent, audio.pictures[0].data)
 
         audio.save()
         logger.info("Successfully tagged FLAC with Vorbis comments & Picture block: %s", p)

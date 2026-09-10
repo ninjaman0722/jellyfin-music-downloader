@@ -400,7 +400,10 @@ class Downloader:
                             if cov_bytes:
                                 cov_file = target_path.parent / "cover.jpg"
                                 if not cov_file.exists():
-                                    cov_file.write_bytes(cov_bytes)
+                                    try:
+                                        cov_file.write_bytes(cov_bytes)
+                                    except (FileExistsError, OSError):
+                                        pass
                     except Exception as cov_err:
                         logger.debug("[%s] Cover detection error: %s", job_id, cov_err)
 

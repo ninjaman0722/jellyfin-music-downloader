@@ -444,6 +444,9 @@ class JellyfinClient:
         def _clean_guid(g: str) -> str:
             return str(g).replace("-", "").strip().lower() if g else ""
 
+        clean_target = _clean_guid(user_id)
+        is_household = clean_target in (_clean_guid(HOUSEHOLD_USER_ID), _clean_guid(SHARED_USER_ID), "")
+
         async def _fetch_playlist_users(pid: str):
             try:
                 r = await self._request("GET", f"/Playlists/{pid}/Users")
@@ -454,23 +457,44 @@ class JellyfinClient:
             except Exception:
                 return pid, []
 
-        user_lookups = await asyncio.gather(*[_fetch_playlist_users(it["Id"]) for it in items])
-        pl_user_map = dict(user_lookups)
-        clean_target = _clean_guid(user_id)
+        # Only fetch playlist users if there are items without explicit OwnerUserId,
+        # or when querying for Household (to check for user restrictions on unowned items).
+        items_needing_lookup = [
+            it["Id"] for it in items
+            if is_household or not it.get("OwnerUserId")
+        ]
 
-        if clean_target in (_clean_guid(HOUSEHOLD_USER_ID), _clean_guid(SHARED_USER_ID), ""):
-            # Household only includes playlists with no user restrictions (public)
-            items = [it for it in items if not pl_user_map.get(it["Id"])]
+        if items_needing_lookup:
+            user_lookups = await asyncio.gather(*[_fetch_playlist_users(pid) for pid in items_needing_lookup])
+            pl_user_map = dict(user_lookups)
         else:
-            # User badges strictly count personal playlists bound to this user
-            items = [it for it in items if clean_target in pl_user_map.get(it["Id"], [])]
+            pl_user_map = {}
 
         playlists: List[PlaylistSummary] = []
         for item in items:
+            pid = item["Id"]
             owner = item.get("OwnerUserId")
+            clean_owner = _clean_guid(owner)
+
+            if is_household:
+                if clean_owner and clean_owner not in (_clean_guid(HOUSEHOLD_USER_ID), _clean_guid(SHARED_USER_ID)):
+                    continue
+                # If pl_user_map has users assigned, it is private to specific users
+                if pl_user_map.get(pid):
+                    continue
+            else:
+                if clean_owner:
+                    if clean_owner != clean_target and clean_owner not in (_clean_guid(HOUSEHOLD_USER_ID), _clean_guid(SHARED_USER_ID)):
+                        continue
+                else:
+                    # If no OwnerUserId was provided, check if assigned via /Playlists/{pid}/Users
+                    assigned_users = pl_user_map.get(pid, [])
+                    if assigned_users and clean_target not in assigned_users:
+                        continue
+
             count = item.get("ChildCount", 0)
             playlists.append(PlaylistSummary(
-                id=item["Id"],
+                id=pid,
                 name=item.get("Name", "Untitled"),
                 track_count=count,
                 item_count=count,
