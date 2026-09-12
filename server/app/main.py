@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -782,10 +783,9 @@ async def get_users(request: Request, settings: ServerConfig = Depends(get_setti
     auth_header = request.headers.get("Authorization", "")
     token = None
     if "Token=" in auth_header:
-        try:
-            token = auth_header.split('Token="')[1].split('"')[0]
-        except IndexError:
-            pass
+        match = re.search(r'Token=[\\"]*([a-zA-Z0-9_\-]+)[\\"]*', auth_header)
+        if match:
+            token = match.group(1)
     elif auth_header.startswith("Bearer "):
         token = auth_header[7:].strip()
 
