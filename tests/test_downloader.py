@@ -638,29 +638,29 @@ async def test_downloader_real_process_manager_integration():
 
 
 @pytest.mark.asyncio
-async def test_downloader_falls_back_to_spotdl_on_failure(monkeypatch):
-    """Verify that when yt-dlp fails, Downloader automatically retries with spotdl."""
+async def test_downloader_auto_prefers_spotdl_and_falls_back_to_ytdlp(monkeypatch):
+    """Verify that in AUTO mode, SpotDL is preferred first, and falls back to yt-dlp if it fails."""
     with tempfile.TemporaryDirectory() as td:
         music_dir = Path(td)
         pm = ProcessManager()
-        job_id = "job_spotdl_fallback"
+        job_id = "job_spotdl_primary"
         await pm.register_job(job_id, "user1", "Single")
 
         executed_cmds = []
 
         async def mock_runner(cmd, job_id, cwd, temp_dir, in_flight_target, timeout):
             executed_cmds.append(cmd)
-            if cmd[0] == "yt-dlp":
-                # Simulate yt-dlp bot challenge / extraction error
-                return 1, "", "ERROR: Sign in to confirm you're not a bot."
-            elif cmd[0] == "spotdl":
-                # Spotdl succeeds and writes file
-                temp_dir.write_bytes(b"SPOTDL_AUDIO_BYTES")
+            if cmd[0] == "spotdl":
+                # Simulate spotdl failure on first attempt
+                return 1, "", "ERROR: Spotdl extraction failed"
+            elif cmd[0] == "yt-dlp":
+                # yt-dlp succeeds and writes file
+                temp_dir.write_bytes(b"YTDLP_AUDIO_BYTES")
                 return 0, "Downloaded", ""
             return 1, "", "Unknown engine"
 
         import shutil
-        monkeypatch.setattr(shutil, "which", lambda cmd: "/usr/bin/spotdl" if cmd == "spotdl" else "/usr/bin/yt-dlp")
+        monkeypatch.setattr(shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
 
         downloader = Downloader(
             music_dir=music_dir,
@@ -671,7 +671,56 @@ async def test_downloader_falls_back_to_spotdl_on_failure(monkeypatch):
         )
 
         track = DownloadTrack(
-            id="t_fallback",
+            id="t_primary",
+            title="OUTTHEWAY",
+            artist="Guy Arthur",
+            album="Single",
+            track_number=1,
+            disc_number=1,
+        )
+
+        res = await downloader.download_single_track(track, job_id)
+
+        assert res.success is True
+        assert len(executed_cmds) == 2
+        assert executed_cmds[0][0] == "spotdl"
+        assert "Guy Arthur - OUTTHEWAY" in executed_cmds[0]
+        assert executed_cmds[1][0] == "yt-dlp"
+
+
+@pytest.mark.asyncio
+async def test_downloader_ytdlp_falls_back_to_spotdl(monkeypatch):
+    """Verify that when yt-dlp fails, Downloader retries with spotdl."""
+    with tempfile.TemporaryDirectory() as td:
+        music_dir = Path(td)
+        pm = ProcessManager()
+        job_id = "job_ytdlp_to_spotdl"
+        await pm.register_job(job_id, "user1", "Single")
+
+        executed_cmds = []
+
+        async def mock_runner(cmd, job_id, cwd, temp_dir, in_flight_target, timeout):
+            executed_cmds.append(cmd)
+            if cmd[0] == "yt-dlp":
+                return 1, "", "ERROR: Sign in to confirm you're not a bot."
+            elif cmd[0] == "spotdl":
+                temp_dir.write_bytes(b"SPOTDL_AUDIO_BYTES")
+                return 0, "Downloaded", ""
+            return 1, "", "Unknown engine"
+
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
+
+        downloader = Downloader(
+            music_dir=music_dir,
+            process_manager=pm,
+            engine=DownloadEngine.YTDLP,
+            max_retries=1,
+            command_runner=mock_runner,
+        )
+
+        track = DownloadTrack(
+            id="t_ytdlp_fallback",
             title="OUTTHEWAY",
             artist="Guy Arthur",
             album="Single",
@@ -686,6 +735,26 @@ async def test_downloader_falls_back_to_spotdl_on_failure(monkeypatch):
         assert executed_cmds[0][0] == "yt-dlp"
         assert executed_cmds[1][0] == "spotdl"
         assert "Guy Arthur - OUTTHEWAY" in executed_cmds[1]
+
+
+def test_downloader_auto_engine_selection(monkeypatch):
+    """Verify build_download_command selects spotdl when available, yt-dlp otherwise."""
+    import shutil
+    pm = ProcessManager()
+    track = DownloadTrack(id="1", title="Song", artist="Artist", album="Album")
+    part_path = Path("/tmp/part.mp3")
+
+    # When both are available, spotdl is selected
+    monkeypatch.setattr(shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
+    dl = Downloader(music_dir="/tmp", process_manager=pm, engine=DownloadEngine.AUTO)
+    cmd = dl.build_download_command(track, part_path)
+    assert cmd[0] == "spotdl"
+
+    # When only yt-dlp is available, yt-dlp is selected
+    monkeypatch.setattr(shutil, "which", lambda cmd: "/usr/bin/yt-dlp" if cmd == "yt-dlp" else None)
+    cmd_ytdlp = dl.build_download_command(track, part_path)
+    assert cmd_ytdlp[0] == "yt-dlp"
+
 
 
 
