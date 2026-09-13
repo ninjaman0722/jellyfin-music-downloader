@@ -71,6 +71,7 @@ class ResolveTrack(BaseModel):
     exists_locally: bool = False
     local_path: Optional[str] = None
     source_playlist_name: Optional[str] = None
+    url: Optional[str] = None
 
 
 class ResolveRequest(BaseModel):
@@ -207,6 +208,7 @@ class YtDlpMetadataExtractor:
                 album = "Single"
 
             duration = float(entry.get("duration") or 180) * 1000.0
+            track_url = entry.get("url") or entry.get("webpage_url") or (f"https://www.youtube.com/watch?v={entry.get('id')}" if entry.get("id") else None)
 
             tracks.append(
                 ResolveTrack(
@@ -220,6 +222,7 @@ class YtDlpMetadataExtractor:
                     exists_locally=False,
                     local_path=None,
                     source_playlist_name=source_pl,
+                    url=track_url,
                 )
             )
 
@@ -242,6 +245,7 @@ class YtDlpMetadataExtractor:
             exists_locally=False,
             local_path=None,
             source_playlist_name=pl_name,
+            url=url if not is_pl else None,
         )
         return pl_name or "Imported Tracks", pl_id, [track]
 
@@ -351,6 +355,7 @@ class SpotifyMetadataExtractor:
                 else:
                     t_album = "Single"
 
+                track_url = f"https://open.spotify.com/track/{t_id}" if t_id else None
                 extra_tracks.append(
                     ResolveTrack(
                         id=f"t_{t_id}",
@@ -363,6 +368,7 @@ class SpotifyMetadataExtractor:
                         exists_locally=False,
                         local_path=None,
                         source_playlist_name=playlist_name,
+                        url=track_url,
                     )
                 )
                 track_idx += 1
@@ -460,6 +466,7 @@ class SpotifyMetadataExtractor:
                 track_id = uri.split(":")[-1] if uri else f"t_{artist_id}_{track_idx}"
                 duration = float(item.get("duration") or 180000.0)
 
+                track_url = f"https://open.spotify.com/track/{track_id}" if track_id and not track_id.startswith("t_") else None
                 tracks.append(
                     ResolveTrack(
                         id=f"t_{track_id}",
@@ -472,6 +479,7 @@ class SpotifyMetadataExtractor:
                         exists_locally=False,
                         local_path=None,
                         source_playlist_name=None,
+                        url=track_url,
                     )
                 )
                 track_idx += 1
@@ -569,6 +577,7 @@ class SpotifyMetadataExtractor:
                         exists_locally=False,
                         local_path=None,
                         source_playlist_name=None,
+                        url=f"https://open.spotify.com/track/{spotify_id}",
                     )
                 )
                 return None, playlist_id, tracks
@@ -581,6 +590,7 @@ class SpotifyMetadataExtractor:
                 track_id = t_uri.split(":")[-1]
                 t_dur = float(item.get("duration") or 180000.0)
 
+                track_url = f"https://open.spotify.com/track/{track_id}" if track_id and not track_id.startswith("t_") else None
                 tracks.append(
                     ResolveTrack(
                         id=f"t_{track_id}",
@@ -593,6 +603,7 @@ class SpotifyMetadataExtractor:
                         exists_locally=False,
                         local_path=None,
                         source_playlist_name=clean_title if entity_type == "playlist" else None,
+                        url=track_url,
                     )
                 )
 

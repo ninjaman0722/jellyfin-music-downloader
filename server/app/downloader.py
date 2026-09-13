@@ -206,12 +206,23 @@ class Downloader:
         """Builds an optimized argv list (shell=False) for spotdl or yt-dlp."""
         selected_engine = engine or self.engine
         if selected_engine == DownloadEngine.AUTO:
-            if shutil.which("spotdl") is not None:
-                selected_engine = DownloadEngine.SPOTDL
-            elif shutil.which("yt-dlp") is not None:
-                selected_engine = DownloadEngine.YTDLP
+            if track.url and ("youtube.com" in track.url or "youtu.be" in track.url):
+                if shutil.which("yt-dlp") is not None:
+                    selected_engine = DownloadEngine.YTDLP
+                elif shutil.which("spotdl") is not None:
+                    selected_engine = DownloadEngine.SPOTDL
+            elif track.url and "spotify.com" in track.url:
+                if shutil.which("spotdl") is not None:
+                    selected_engine = DownloadEngine.SPOTDL
+                elif shutil.which("yt-dlp") is not None:
+                    selected_engine = DownloadEngine.YTDLP
             else:
-                selected_engine = DownloadEngine.SPOTDL
+                if shutil.which("spotdl") is not None:
+                    selected_engine = DownloadEngine.SPOTDL
+                elif shutil.which("yt-dlp") is not None:
+                    selected_engine = DownloadEngine.YTDLP
+                else:
+                    selected_engine = DownloadEngine.SPOTDL
 
         fmt = self.format_ext.lstrip(".")
         if selected_engine == DownloadEngine.SPOTDL:
@@ -343,7 +354,11 @@ class Downloader:
         # 4. Build command and execute with retry loop
         effective_engine = self.engine
         if effective_engine == DownloadEngine.AUTO:
-            if shutil.which("spotdl") is not None:
+            if track.url and ("youtube.com" in track.url or "youtu.be" in track.url) and shutil.which("yt-dlp") is not None:
+                effective_engine = DownloadEngine.YTDLP
+            elif track.url and "spotify.com" in track.url and shutil.which("spotdl") is not None:
+                effective_engine = DownloadEngine.SPOTDL
+            elif shutil.which("spotdl") is not None:
                 effective_engine = DownloadEngine.SPOTDL
             elif shutil.which("yt-dlp") is not None:
                 effective_engine = DownloadEngine.YTDLP
@@ -390,6 +405,47 @@ class Downloader:
                         last_error = f"Command succeeded but partial file {part_path.name} was empty or missing, or not a regular file"
                         logger.warning("[%s] %s (attempt %d/%d)", job_id, last_error, attempt, self.max_retries + 1)
                         continue
+
+                    # 5.5. SpotDL Content Match Verification: prevent saving mismatched songs
+                    if current_engine == DownloadEngine.SPOTDL and track.title:
+                        try:
+                            tag_title = ""
+                            try:
+                                from mutagen.id3 import ID3
+                                id3 = ID3(str(actual_part))
+                                if "TIT2" in id3:
+                                    tag_title = str(id3["TIT2"])
+                            except Exception:
+                                pass
+
+                            if not tag_title:
+                                try:
+                                    import mutagen
+                                    mf = mutagen.File(str(actual_part))
+                                    if mf and mf.tags:
+                                        if hasattr(mf, "tags") and "TIT2" in mf.tags:
+                                            tag_title = str(mf.tags["TIT2"])
+                                        elif hasattr(mf, "tags") and "\xa9nam" in mf.tags:
+                                            tag_title = str(mf.tags["\xa9nam"][0])
+                                except Exception:
+                                    pass
+
+                            if tag_title:
+                                from difflib import SequenceMatcher
+                                sim = SequenceMatcher(None, track.title.lower(), tag_title.lower()).ratio()
+                                req_words = set(w for w in track.title.lower().replace("-", " ").replace("(", " ").replace(")", " ").split() if len(w) >= 3)
+                                down_words = set(w for w in tag_title.lower().replace("-", " ").replace("(", " ").replace(")", " ").split() if len(w) >= 3)
+                                has_word_overlap = bool(req_words & down_words)
+                                if sim < 0.40 and not has_word_overlap:
+                                    last_error = f"SpotDL matched wrong song '{tag_title}' for requested '{track.title}' (similarity {sim:.2f})"
+                                    logger.warning("[%s] %s; rejecting download to trigger fallback", job_id, last_error)
+                                    try:
+                                        actual_part.unlink()
+                                    except OSError:
+                                        pass
+                                    continue
+                        except Exception as val_err:
+                            logger.debug("[%s] SpotDL verification skipped: %s", job_id, val_err)
 
                     # 6. Atomic Rename to final path
                     os.replace(actual_part, target_path)

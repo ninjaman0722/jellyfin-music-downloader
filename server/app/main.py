@@ -505,6 +505,7 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                     disc_number=t.disc_number,
                     track_number=t.track_number,
                     duration_ms=t.duration_ms,
+                    url=getattr(t, "url", None),
                 )
                 for t in diff_res.tracks
                 if not t.exists_locally and (selected_set is None or t.id in selected_set)
@@ -531,6 +532,7 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                         indexer.add_track(res.path, res.title, res.artist)
 
                     target_album = res.album
+                    lyrics_text = None
                     if req.embed_lyrics and lyrics_client:
                         try:
                             lrc_res = await lyrics_client.fetch_lyrics(

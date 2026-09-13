@@ -756,5 +756,85 @@ def test_downloader_auto_engine_selection(monkeypatch):
     assert cmd_ytdlp[0] == "yt-dlp"
 
 
+def test_downloader_auto_engine_youtube_url_direct_ytdlp(monkeypatch):
+    """Verify that in AUTO mode, a direct YouTube URL routes to yt-dlp with the exact URL."""
+    import shutil
+    pm = ProcessManager()
+    track = DownloadTrack(
+        id="1",
+        title="Fifteen (LENN, Jayjax & ERJË Edit)",
+        artist="LENN",
+        album="Single",
+        url="https://music.youtube.com/watch?v=5ws4QBP9yi8",
+    )
+    part_path = Path("/tmp/part.mp3")
+
+    monkeypatch.setattr(shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
+    dl = Downloader(music_dir="/tmp", process_manager=pm, engine=DownloadEngine.AUTO)
+    cmd = dl.build_download_command(track, part_path)
+    assert cmd[0] == "yt-dlp"
+    assert "https://music.youtube.com/watch?v=5ws4QBP9yi8" in cmd
+
+
+@pytest.mark.asyncio
+async def test_downloader_spotdl_mismatched_song_rejected_and_falls_back(monkeypatch):
+    """Verify that when SpotDL downloads a completely mismatched song, it is rejected and falls back."""
+    with tempfile.TemporaryDirectory() as td:
+        music_dir = Path(td)
+        pm = ProcessManager()
+        job_id = "job_spotdl_reject"
+        await pm.register_job(job_id, "user1", "Single")
+
+        executed_cmds = []
+
+        async def mock_runner(cmd, job_id, cwd, temp_dir, in_flight_target, timeout):
+            executed_cmds.append(cmd)
+            if cmd[0] == "spotdl":
+                # Create a file with mismatched ID3 tag
+                import mutagen
+                from mutagen.id3 import ID3, TIT2, TPE1
+                temp_dir.write_bytes(b"MOCK_SPOTDL_AUDIO_BYTES")
+                tags = ID3()
+                tags.add(TIT2(encoding=3, text=["LENORA"]))
+                tags.add(TPE1(encoding=3, text=["16teen"]))
+                tags.save(str(temp_dir))
+                return 0, "Downloaded", ""
+            elif cmd[0] == "yt-dlp":
+                # yt-dlp succeeds with the correct audio
+                temp_dir.write_bytes(b"YTDLP_CORRECT_AUDIO_BYTES")
+                return 0, "Downloaded", ""
+            return 1, "", "Unknown engine"
+
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda cmd: f"/usr/bin/{cmd}")
+
+        downloader = Downloader(
+            music_dir=music_dir,
+            process_manager=pm,
+            engine=DownloadEngine.SPOTDL,
+            max_retries=1,
+            command_runner=mock_runner,
+        )
+
+        track = DownloadTrack(
+            id="t_mismatch",
+            title="Fifteen (LENN, Jayjax & ERJË Edit)",
+            artist="LENN",
+            album="Single",
+            track_number=1,
+            disc_number=1,
+            url="https://music.youtube.com/watch?v=5ws4QBP9yi8",
+        )
+
+        res = await downloader.download_single_track(track, job_id)
+
+        assert res.success is True
+        assert len(executed_cmds) == 2
+        assert executed_cmds[0][0] == "spotdl"
+        assert executed_cmds[1][0] == "yt-dlp"
+        assert "https://music.youtube.com/watch?v=5ws4QBP9yi8" in executed_cmds[1]
+        assert res.path.read_bytes() == b"YTDLP_CORRECT_AUDIO_BYTES"
+
+
 
 
