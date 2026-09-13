@@ -654,3 +654,86 @@ async def test_ingest_pipeline_stage3_jellyfin_error_preserves_downloaded_tracks
         test_app.state.jellyfin = orig_jf
 
 
+@pytest.mark.asyncio
+async def test_ingest_pipeline_stage3_enriches_album_from_lrclib(
+    async_client: httpx.AsyncClient,
+    test_app: FastAPI,
+    tmp_path: Path,
+):
+    """Verify Stage 3 metadata tagging enriches generic 'Single' album with verified LRCLIB album."""
+    from unittest.mock import AsyncMock, MagicMock
+    from server.app.downloader import TrackResult
+    from server.app.lyrics import LyricsResult
+    from server.app.resolver import ResolveResponse, ResolveTrack
+
+    fake_file = tmp_path / "track.mp3"
+    fake_file.write_bytes(b"\x00" * 100)
+
+    mock_resolver = AsyncMock()
+    mock_resolver.resolve.return_value = ResolveResponse(
+        playlist_name="EDM Hits",
+        playlist_id="pl-edm",
+        total_tracks=1,
+        existing_tracks=0,
+        missing_tracks=1,
+        tracks=[ResolveTrack(id="t1", title="On & On", artist="Armin van Buuren", album="Single", exists_locally=False)],
+    )
+    test_app.state.resolver = mock_resolver
+
+    mock_downloader = AsyncMock()
+    mock_downloader.download_missing_tracks.return_value = [
+        TrackResult(track_id="t1", title="On & On", artist="Armin van Buuren", album="Single", path=fake_file, success=True),
+    ]
+    test_app.state.downloader = mock_downloader
+
+    mock_lyrics = AsyncMock()
+    mock_lyrics.fetch_lyrics.return_value = LyricsResult(
+        synced_lyrics="[00:01.00] On and on",
+        album_name="Feel Again",
+    )
+    orig_lyrics = getattr(test_app.state, "lyrics_client", None)
+    test_app.state.lyrics_client = mock_lyrics
+
+    mock_tagger = MagicMock()
+    orig_tagger = getattr(test_app.state, "tagger", None)
+    test_app.state.tagger = mock_tagger
+
+    mock_jf = AsyncMock()
+    mock_jf.find_music_library.return_value = None
+    mock_jf.refresh_library.return_value = None
+    mock_jf.resolve_track_item_ids.return_value = ["item-1"]
+    mock_jf.create_or_get_playlist.return_value = "pl-1"
+    mock_jf.add_items_to_playlist.return_value = None
+    orig_jf = getattr(test_app.state, "jellyfin", None)
+    test_app.state.jellyfin = mock_jf
+
+    try:
+        resp = await async_client.post(
+            "/api/ingest",
+            json={
+                "urls": ["https://www.youtube.com/playlist?list=PL_edm"],
+                "user_id": "u-1",
+                "playlist_name": "EDM Hits",
+                "embed_lyrics": True,
+            },
+        )
+        assert resp.status_code == 202
+        job_id = resp.json()["job_id"]
+
+        pm = test_app.state.process_manager
+        job = pm.get_job(job_id)
+        if job and job.worker_tasks:
+            await asyncio.gather(*job.worker_tasks, return_exceptions=True)
+
+        assert mock_tagger.embed_metadata.called
+        call_kwargs = mock_tagger.embed_metadata.call_args[1]
+        assert call_kwargs["track"]["album"] == "Feel Again"
+        assert call_kwargs["track"]["artist"] == "Armin van Buuren"
+        assert call_kwargs["track"]["title"] == "On & On"
+    finally:
+        test_app.state.lyrics_client = orig_lyrics
+        test_app.state.tagger = orig_tagger
+        test_app.state.jellyfin = orig_jf
+
+
+

@@ -529,6 +529,8 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                 async with tag_semaphore:
                     if indexer:
                         indexer.add_track(res.path, res.title, res.artist)
+
+                    target_album = res.album
                     if req.embed_lyrics and lyrics_client:
                         try:
                             lrc_res = await lyrics_client.fetch_lyrics(
@@ -538,11 +540,18 @@ async def post_ingest(req: IngestRequest, request: Request, settings: ServerConf
                                 audio_duration=res.duration_seconds,
                             )
                             lyrics_text = lrc_res.best_lyrics() if (lrc_res and lrc_res.has_lyrics()) else None
+
+                            # If album tag was a generic fallback, enrich with LRCLIB album if verified
+                            if lrc_res and lrc_res.album_name and target_album in ("Single", "Unknown Album", req.playlist_name):
+                                verified_album = lrc_res.album_name.strip()
+                                if verified_album:
+                                    target_album = verified_album
+
                             if tagger:
                                 await asyncio.to_thread(
                                     tagger.embed_metadata,
                                     file_path=res.path,
-                                    track={"title": res.title, "artist": res.artist, "album": res.album},
+                                    track={"title": res.title, "artist": res.artist, "album": target_album},
                                     lyrics=lyrics_text,
                                 )
                         except Exception as tag_err:

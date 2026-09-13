@@ -97,6 +97,55 @@ class MetadataExtractor(Protocol):
         ...
 
 
+def clean_yt_track_metadata(
+    raw_title: str,
+    raw_artist: Optional[str] = None,
+    uploader: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Cleans YouTube track artist and title.
+    - Strips ' - Topic' from artists/channels.
+    - Parses 'Artist - Title' from raw_title if artist is missing or generic.
+    - Strips common video artifacts from title ((Official Video), [Visualizer], etc.).
+    """
+    artist = (raw_artist or uploader or "Unknown Artist").strip()
+    artist = re.sub(r"\s*-\s*Topic$", "", artist, flags=re.IGNORECASE).strip()
+    title = (raw_title or "").strip()
+
+    if " - " in title:
+        parts = title.split(" - ", 1)
+        cand_artist = re.sub(r"\s*-\s*Topic$", "", parts[0], flags=re.IGNORECASE).strip()
+        cand_title = parts[1].strip()
+        if cand_artist and len(cand_artist) <= 60:
+            if (
+                not raw_artist
+                or raw_artist.lower() in ("unknown artist", "unknown", "various artists")
+                or raw_artist == uploader
+                or cand_artist.lower() == artist.lower()
+            ):
+                artist = cand_artist
+                title = cand_title
+            elif cand_artist.lower() in artist.lower():
+                title = cand_title
+
+    # Strip common video artifacts from title
+    patterns = [
+        r"\s*[\(\[](?:Official\s+)?(?:Music\s+)?Video[\)\]]",
+        r"\s*[\(\[](?:Official\s+)?Audio[\)\]]",
+        r"\s*[\(\[]Lyric\s+Video[\)\]]",
+        r"\s*[\(\[]Visualizer[\)\]]",
+        r"\s*[\(\[]FREE\s+DOWNLOAD[\)\]]",
+        r"\s*[\(\[](?:Official\s+)?HD\s+Video[\)\]]",
+        r"\s*[\(\[]HD[\)\]]",
+        r"\s*[\(\[]4K[\)\]]",
+        r"\s*[\(\[]Official[\)\]]",
+    ]
+    for pat in patterns:
+        title = re.sub(pat, "", title, flags=re.IGNORECASE)
+
+    title = re.sub(r"\s+", " ", title).strip()
+    return artist, title
+
+
 class YtDlpMetadataExtractor:
     async def extract_tracks(self, url: str, artist_mode: str = "discography") -> Tuple[str, str, List[ResolveTrack]]:
         try:
@@ -136,13 +185,27 @@ class YtDlpMetadataExtractor:
         playlist_id = info.get("id") or f"pl-{uuid.uuid4().hex[:8]}"
         entries = info.get("entries") or [info]
 
+        is_official_album = False
+        if "list=OLAK5uy_" in url or info.get("_type") == "album":
+            is_official_album = True
+
         tracks: List[ResolveTrack] = []
         for idx, entry in enumerate(entries, start=1):
             if not entry:
                 continue
-            title = entry.get("title") or entry.get("track") or f"Track {idx}"
-            artist = entry.get("artist") or entry.get("uploader") or entry.get("channel") or "Unknown Artist"
-            album = entry.get("album") or playlist_name or "Single"
+            raw_title = entry.get("title") or entry.get("track") or f"Track {idx}"
+            raw_artist = entry.get("artist")
+            uploader = entry.get("uploader") or entry.get("channel")
+            artist, title = clean_yt_track_metadata(raw_title, raw_artist, uploader)
+
+            raw_album = entry.get("album")
+            if raw_album and str(raw_album).strip():
+                album = str(raw_album).strip()
+            elif is_official_album:
+                album = playlist_name or "Album"
+            else:
+                album = "Single"
+
             duration = float(entry.get("duration") or 180) * 1000.0
 
             tracks.append(
@@ -172,7 +235,7 @@ class YtDlpMetadataExtractor:
             id="t_1",
             title=url.split("/")[-1].split("?")[0] or "Track 1",
             artist="Unknown Artist",
-            album=pl_name or "Single",
+            album="Single",
             disc_number=1,
             track_number=1,
             duration_ms=180000.0,
@@ -286,7 +349,7 @@ class SpotifyMetadataExtractor:
                 if isinstance(alb_obj, dict) and alb_obj.get("name"):
                     t_album = unicodedata.normalize("NFKC", str(alb_obj.get("name"))).strip()
                 else:
-                    t_album = playlist_name
+                    t_album = "Single"
 
                 extra_tracks.append(
                     ResolveTrack(
@@ -523,7 +586,7 @@ class SpotifyMetadataExtractor:
                         id=f"t_{track_id}",
                         title=t_title,
                         artist=t_artist,
-                        album=clean_title,
+                        album=clean_title if entity_type == "album" else "Single",
                         disc_number=1,
                         track_number=idx,
                         duration_ms=t_dur,

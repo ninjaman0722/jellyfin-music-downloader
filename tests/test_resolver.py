@@ -24,7 +24,10 @@ from server.app.resolver import (
     Resolver,
     ResolveResponse,
     ResolveTrack,
+    SpotifyMetadataExtractor,
     URLType,
+    YtDlpMetadataExtractor,
+    clean_yt_track_metadata,
     detect_url_type,
 )
 
@@ -438,5 +441,97 @@ async def test_resolver_is_playlist_classification():
     pl_res = resolver.diff_tracks(pl_tracks, is_playlist=True)
     assert pl_res.is_playlist is True
     assert pl_res.detected_playlists == ["My Summer Hits"]
+
+
+def test_clean_yt_track_metadata():
+    """Verify YouTube track and artist cleaning strips artifacts and extracts clean artist/title."""
+    # 1. Topic channel cleaning
+    art, tit = clean_yt_track_metadata("Beast", None, "Kompany - Topic")
+    assert art == "Kompany"
+    assert tit == "Beast"
+
+    # 2. Uploader != artist, artist in title with official video tag
+    art, tit = clean_yt_track_metadata(
+        "Headhunterz - Destiny (Radio Edit)",
+        None,
+        "LOSERRANODE",
+    )
+    assert art == "Headhunterz"
+    assert tit == "Destiny (Radio Edit)"
+
+    # 3. Free download / music video artifacts
+    art, tit = clean_yt_track_metadata(
+        "VINAI - Our Style (FREE DOWNLOAD)",
+        "VINAI",
+        "VINAI",
+    )
+    assert art == "VINAI"
+    assert tit == "Our Style"
+
+    # 4. Collaboration in title
+    art, tit = clean_yt_track_metadata(
+        "Apashe x YMIR - Never Change (Official Audio)",
+        "Apashe",
+        "Apashe",
+    )
+    assert "Apashe" in art
+    assert tit == "Never Change"
+
+
+@pytest.mark.asyncio
+async def test_yt_playlist_does_not_pollute_album(monkeypatch):
+    """Verify multi-artist YouTube playlists do NOT set track album to the playlist title."""
+    fake_info = {
+        "title": "EDM - Hard",
+        "id": "PL_test_123",
+        "_type": "playlist",
+        "entries": [
+            {
+                "id": "v1",
+                "title": "Timmy Trumpet - Freaks (Official Video)",
+                "uploader": "Spinnin Records",
+                "duration": 180,
+            },
+            {
+                "id": "v2",
+                "title": "Armin van Buuren - On & On",
+                "uploader": "Armin van Buuren",
+                "duration": 200,
+            },
+        ],
+    }
+
+    class FakeYDL:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def extract_info(self, url, download=False):
+            return fake_info
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDL)
+
+    extractor = YtDlpMetadataExtractor()
+    pl_name, pl_id, tracks = await extractor.extract_tracks(
+        "https://www.youtube.com/playlist?list=PL_test_123"
+    )
+
+    assert pl_name == "EDM - Hard"
+    assert len(tracks) == 2
+
+    # Tracks must NOT have album set to the playlist name "EDM - Hard"!
+    assert tracks[0].artist == "Timmy Trumpet"
+    assert tracks[0].title == "Freaks"
+    assert tracks[0].album == "Single"
+    assert tracks[0].source_playlist_name == "EDM - Hard"
+
+    assert tracks[1].artist == "Armin van Buuren"
+    assert tracks[1].title == "On & On"
+    assert tracks[1].album == "Single"
+    assert tracks[1].source_playlist_name == "EDM - Hard"
+
 
 
