@@ -931,3 +931,29 @@ class TestThemeWatcherRegressions:
             assert saved.get("scaleFactor") == 1.75
         finally:
             win.close()
+
+    def test_user_button_selection_and_playlist_routing(self, qapp):
+        """Verify selecting personal user account highlights button, updates target label, and switches to playlist routing."""
+        win = app.MainWindow()
+        try:
+            mock_users = [
+                {"id": "00000000000000000000000000000000", "name": "Household (Shared)", "playlists": []},
+                {"id": "u-avery-123", "name": "Avery", "playlists": []},
+            ]
+            win.on_users_loaded(mock_users)
+            assert len(win.user_buttons) == 2
+
+            # Initially Household is index 0
+            assert win.selected_user["name"] == "Household (Shared)"
+            assert win.radio_lib_only.isChecked()
+
+            # Click Avery button
+            win.user_buttons[1].click()
+            assert win.selected_user["id"] == "u-avery-123"
+            assert win.user_buttons[1].isChecked()
+            assert not win.user_buttons[0].isChecked()
+            assert "Avery" in win.user_status_label.text()
+            assert win.radio_new_pl.isChecked()
+            assert not win.radio_lib_only.isChecked()
+        finally:
+            win.close()

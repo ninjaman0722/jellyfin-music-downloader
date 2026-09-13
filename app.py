@@ -275,6 +275,27 @@ QPushButton:hover {{
 QPushButton:pressed {{
     background-color: {muted};
 }}
+QPushButton:checked {{
+    background-color: {accent};
+    color: {darker_bg};
+    border: 2px solid {accent};
+    font-weight: bold;
+}}
+QPushButton:checked:hover {{
+    background-color: {colors.get('blue', '#81a1c1')};
+    color: {darker_bg};
+}}
+QPushButton[userBtn="true"] {{
+    padding: 9px 18px;
+    border-radius: 6px;
+    font-size: 13px;
+}}
+QPushButton[userBtn="true"]:checked {{
+    background-color: {accent};
+    color: #191c23;
+    border: 2px solid {fg};
+    font-weight: bold;
+}}
 QPushButton#primaryBtn {{
     background-color: {accent};
     color: {darker_bg};
@@ -1061,10 +1082,10 @@ class MainWindow(QtWidgets.QMainWindow):
         user_group = QtWidgets.QGroupBox("Target Jellyfin Account")
         user_layout = QtWidgets.QVBoxLayout(user_group)
         self.user_btn_layout = QtWidgets.QHBoxLayout()
-        self.user_status_label = QtWidgets.QLabel("Fetching accounts from daemon...")
-        self.user_status_label.setStyleSheet("color: #8fbcbb;")
-        self.user_btn_layout.addWidget(self.user_status_label)
         user_layout.addLayout(self.user_btn_layout)
+        self.user_status_label = QtWidgets.QLabel("Fetching accounts from daemon...")
+        self.user_status_label.setStyleSheet("color: #8fbcbb; font-size: 12px; margin-top: 4px;")
+        user_layout.addWidget(self.user_status_label)
         layout.addWidget(user_group)
 
         # Playlist Routing & Bitrate Group
@@ -1358,20 +1379,36 @@ class MainWindow(QtWidgets.QMainWindow):
             is_def = bool(def_name and name.lower() == def_name)
             btn = QtWidgets.QPushButton(f"{icon} {name}{' (Default)' if is_def else ''}")
             btn.setCheckable(True)
-            if i == selected_idx:
-                btn.setChecked(True)
-                self.selected_user = user
-                self.populate_playlists(user)
-
+            btn.setProperty("userBtn", "true")
             btn.clicked.connect(lambda checked, u=user, b=btn: self.on_user_selected(u, b))
             self.user_btn_layout.addWidget(btn)
             self.user_buttons.append(btn)
+
+        if self.user_buttons and 0 <= selected_idx < len(self.users):
+            self.on_user_selected(self.users[selected_idx], self.user_buttons[selected_idx])
 
     def on_user_selected(self, user: Dict[str, Any], clicked_btn: QtWidgets.QPushButton):
         self.selected_user = user
         for b in self.user_buttons:
             b.setChecked(b == clicked_btn)
         self.populate_playlists(user)
+
+        is_household = (user.get("id") == "00000000000000000000000000000000" or user.get("name") == "Household (Shared)")
+        if is_household:
+            self.radio_lib_only.setChecked(True)
+            self.user_status_label.setText("🎯 Active Target: 👥 Household (Shared Library Only)")
+            self.user_status_label.setStyleSheet("color: #88c0d0; font-weight: bold; font-size: 12px; margin-top: 4px;")
+        else:
+            name = user.get("name", "User")
+            self.user_status_label.setText(f"🎯 Active Target: 👤 {name} (Playlist Sync Enabled)")
+            self.user_status_label.setStyleSheet("color: #a3be8c; font-weight: bold; font-size: 12px; margin-top: 4px;")
+
+            # Personal user selected: automatically switch to playlist creation
+            playlists = user.get("playlists", [])
+            if playlists and not self.radio_new_pl.isChecked():
+                self.radio_existing_pl.setChecked(True)
+            else:
+                self.radio_new_pl.setChecked(True)
 
     def populate_playlists(self, user: Dict[str, Any]):
         self.pl_combo.clear()
@@ -1384,7 +1421,7 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.radio_existing_pl.setEnabled(False)
             if self.radio_existing_pl.isChecked():
-                self.radio_lib_only.setChecked(True)
+                self.radio_new_pl.setChecked(True)
 
     # --------------------------------------------------------------------------
     # Pre-Flight Diff & Ingestion Execution
@@ -1412,6 +1449,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.diff_btn.setEnabled(True)
         self.diff_btn.setText("🔍 Pre-Flight Diff")
         self.analysis_card.update_diff(data)
+        pl_name = data.get("playlist_name")
+        if pl_name and pl_name not in ("Streaming Tracks", "Imported Tracks"):
+            if not self.pl_new_input.text().strip():
+                self.pl_new_input.setText(pl_name)
+            is_household = not self.selected_user or (self.selected_user.get("id") == "00000000000000000000000000000000" or self.selected_user.get("name") == "Household (Shared)")
+            if not is_household and self.radio_lib_only.isChecked():
+                self.radio_new_pl.setChecked(True)
         self.show_toast("✓ Pre-flight diff analysis complete")
 
     def on_diff_error(self, err: str):
@@ -1425,26 +1469,24 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "No URLs", "Please enter at least one Spotify or YouTube Music URL.")
             return
 
+        is_household = not self.selected_user or (self.selected_user.get("id") == "00000000000000000000000000000000" or self.selected_user.get("name") == "Household (Shared)")
         is_playlist_mode = any("playlist" in u.lower() or "list=" in u.lower() for u in urls)
-        wants_playlist = self.radio_existing_pl.isChecked() or self.radio_new_pl.isChecked() or (is_playlist_mode and not self.radio_lib_only.isChecked())
-
-        if wants_playlist and not self.selected_user:
-            QtWidgets.QMessageBox.warning(self, "No User", "Please select a target Jellyfin account for playlist creation.")
-            return
 
         if self.radio_existing_pl.isChecked():
+            wants_playlist = True
             playlist_name = self.pl_combo.currentText()
         elif self.radio_new_pl.isChecked():
-            playlist_name = self.pl_new_input.text().strip()
-            if not playlist_name:
-                QtWidgets.QMessageBox.warning(self, "Missing Name", "Please enter a name for the new playlist.")
-                return
-        elif is_playlist_mode and not self.radio_lib_only.isChecked():
-            playlist_name = "AUTO"
+            wants_playlist = True
+            playlist_name = self.pl_new_input.text().strip() or "AUTO"
+        elif not is_household:
+            # Personal user selected: ALWAYS route to playlist for personal accounts
+            wants_playlist = True
+            playlist_name = self.pl_new_input.text().strip() or "AUTO"
         else:
+            wants_playlist = False
             playlist_name = "__NO_PLAYLIST__"
 
-        user_id = self.selected_user.get("id") if (wants_playlist and self.selected_user) else None
+        user_id = self.selected_user.get("id") if (wants_playlist and self.selected_user and not is_household) else None
 
         payload = {
             "urls": urls,
