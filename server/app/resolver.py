@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import glob
 import json
 import logging
 import os
 import re
+import sys
 import time
 import unicodedata
 import urllib.error
@@ -251,12 +253,112 @@ class YtDlpMetadataExtractor:
 
 
 class SpotifyMetadataExtractor:
+    @staticmethod
+    def _init_spotdl_client() -> bool:
+        """Ensures spotdl virtualenv is available on sys.path and initializes SpotifyClient."""
+        import glob
+        for p in glob.glob("/opt/spotdl/lib/python*/site-packages"):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        try:
+            from spotdl.utils.spotify import SpotifyClient
+            try:
+                client_id = os.environ.get("SPOTIFY_CLIENT_ID", "5f573c9620494bae87890c0f08a60293")
+                client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "212476d9b0f3472eaa762d90b19b0ba8")
+                SpotifyClient.init(client_id, client_secret)
+            except Exception:
+                pass
+            return True
+        except ImportError:
+            return False
+
+    def _extract_playlist_via_spotdl(
+        self,
+        url: str,
+        spotify_id: str,
+    ) -> Optional[Tuple[str, str, List[ResolveTrack]]]:
+        """Extracts complete Spotify playlist using SpotDL's internal client (bypassing 100-track embed cap)."""
+        if not self._init_spotdl_client():
+            return None
+
+        try:
+            from spotdl.types.playlist import Playlist
+            metadata, songs = Playlist.get_metadata(url)
+            if not songs:
+                return None
+
+            raw_title = metadata.get("name") or "Spotify Playlist"
+            clean_title = unicodedata.normalize("NFKC", str(raw_title)).strip()
+            playlist_id = f"pl-{spotify_id}"
+
+            tracks: List[ResolveTrack] = []
+            for idx, s in enumerate(songs, start=1):
+                t_title = unicodedata.normalize("NFKC", str(s.name or f"Track {idx}")).strip()
+                if isinstance(s.artists, list) and s.artists:
+                    art_str = ", ".join(s.artists)
+                else:
+                    art_str = s.artist or "Unknown Artist"
+                t_artist = unicodedata.normalize("NFKC", str(art_str)).strip()
+                alb_name = s.album_name or clean_title
+                t_album = unicodedata.normalize("NFKC", str(alb_name)).strip()
+                t_dur = float(s.duration * 1000.0) if s.duration else 180000.0
+
+                tracks.append(
+                    ResolveTrack(
+                        id=f"t_{s.song_id}",
+                        title=t_title,
+                        artist=t_artist,
+                        album=t_album,
+                        disc_number=s.disc_number or 1,
+                        track_number=s.track_number or idx,
+                        duration_ms=t_dur,
+                        exists_locally=False,
+                        local_path=None,
+                        source_playlist_name=clean_title,
+                        url=s.url,
+                    )
+                )
+
+            return clean_title, playlist_id, tracks
+        except Exception as exc:
+            logger.warning("SpotDL playlist extraction failed: %s", exc)
+            return None
+
     def _fetch_remaining_playlist_tracks(
         self,
         playlist_id: str,
         playlist_name: str,
         start_offset: int = 100,
     ) -> List[ResolveTrack]:
+        # 1. Prefer SpotDL internal playlist extraction if available
+        try:
+            if self._init_spotdl_client():
+                from spotdl.types.playlist import Playlist
+                pl_url = f"https://open.spotify.com/playlist/{playlist_id}"
+                _, all_songs = Playlist.get_metadata(pl_url)
+                if all_songs and len(all_songs) > start_offset:
+                    extra_tracks = []
+                    for idx, s in enumerate(all_songs[start_offset:], start=start_offset + 1):
+                        art_str = ", ".join(s.artists) if isinstance(s.artists, list) and s.artists else (s.artist or playlist_name)
+                        extra_tracks.append(
+                            ResolveTrack(
+                                id=f"t_{s.song_id}",
+                                title=unicodedata.normalize("NFKC", str(s.name)).strip(),
+                                artist=unicodedata.normalize("NFKC", str(art_str)).strip(),
+                                album=unicodedata.normalize("NFKC", str(s.album_name or playlist_name)).strip(),
+                                disc_number=s.disc_number or 1,
+                                track_number=s.track_number or idx,
+                                duration_ms=float(s.duration * 1000.0) if s.duration else 180000.0,
+                                exists_locally=False,
+                                local_path=None,
+                                source_playlist_name=playlist_name,
+                                url=s.url,
+                            )
+                        )
+                    return extra_tracks
+        except Exception as exc:
+            logger.warning("SpotDL remaining tracks pagination failed: %s", exc)
+
         client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
         client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
         refresh_token = os.environ.get("SPOTIFY_REFRESH_TOKEN", "").strip()
@@ -504,6 +606,19 @@ class SpotifyMetadataExtractor:
                 return discog_res
 
         loop = asyncio.get_running_loop()
+
+        # Try SpotDL native playlist extraction first for complete, uncapped metadata
+        if entity_type == "playlist":
+            try:
+                spotdl_res = await loop.run_in_executor(
+                    None,
+                    lambda: self._extract_playlist_via_spotdl(url, spotify_id),
+                )
+                if spotdl_res and spotdl_res[2]:
+                    logger.info("Successfully extracted %d tracks from Spotify playlist '%s' via SpotDL", len(spotdl_res[2]), spotdl_res[0])
+                    return spotdl_res
+            except Exception as exc:
+                logger.warning("SpotDL playlist extraction failed for '%s', falling back to embed parser: %s", url, exc)
 
         def _fetch_page(sid: str) -> str:
             target_embed = f"https://open.spotify.com/embed/{entity_type}/{sid}"
