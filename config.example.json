@@ -8,5 +8,6 @@
   "embedLyrics": true,
   "embedCover": true,
   "autoClipboardDetect": true,
-  "themeSync": true
+  "themeSync": true,
+  "scaleFactor": 1.0
 }

@@ -72,11 +72,15 @@ try:
         print(f'export MUSIC_FOLDER_URL=\"{cfg[\"musicFolderUrl\"]}\"')
     if 'autoClipboardDetect' in cfg:
         print(f'export AUTO_CLIPBOARD_DETECT=\"{str(cfg[\"autoClipboardDetect\"]).lower()}\"')
+    if cfg.get('scaleFactor'):
+        print(f'export QT_SCALE_FACTOR=\"{cfg[\"scaleFactor\"]}\"')
 except Exception:
     pass
 " 2>/dev/null || true)"
 fi
 export DAEMON_URL="${DAEMON_URL:-http://127.0.0.1:8095}"
+export QT_AUTO_SCREEN_SCALE_FACTOR=1
+export QT_ENABLE_HIGHDPI_SCALING=1
 
 HEALTH_URL="${DAEMON_URL%/}/health"
 

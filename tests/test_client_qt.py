@@ -907,3 +907,27 @@ class TestThemeWatcherRegressions:
             assert str(missing_file) not in win.watcher.files()
         finally:
             win.close()
+
+    def test_scale_factor_config_and_settings(self, qapp, tmp_path, monkeypatch):
+        """Verify scaleFactor loads from config, updates via Settings tab, and persists to disk."""
+        cfg_file = tmp_path / "config.json"
+        cfg_data = {"daemonUrl": "http://127.0.0.1:8095", "scaleFactor": 1.5}
+        cfg_file.write_text(json.dumps(cfg_data), encoding="utf-8")
+        monkeypatch.setattr(app, "CONFIG_FILE", str(cfg_file))
+
+        win = app.MainWindow()
+        try:
+            assert win.config.get("scaleFactor") == 1.5
+            assert win.scale_combo.currentData() == 1.5
+
+            # Change scale to 1.75 and save
+            idx = win.scale_combo.findData(1.75)
+            assert idx >= 0
+            win.scale_combo.setCurrentIndex(idx)
+            win.save_config()
+
+            # Verify saved to disk
+            saved = json.loads(cfg_file.read_text(encoding="utf-8"))
+            assert saved.get("scaleFactor") == 1.75
+        finally:
+            win.close()

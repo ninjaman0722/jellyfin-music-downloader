@@ -119,6 +119,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "embedCover": True,
     "autoClipboardDetect": True,
     "themeSync": True,
+    "scaleFactor": 1.0,
 }
 
 
@@ -889,9 +890,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_config(self) -> Dict[str, Any]:
         cfg = dict(DEFAULT_CONFIG)
-        if os.path.exists(CONFIG_FILE):
+        target_file = CONFIG_FILE
+        if not os.path.exists(target_file):
+            local_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            if os.path.exists(local_cfg):
+                target_file = local_cfg
+
+        if os.path.exists(target_file):
             try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                with open(target_file, "r", encoding="utf-8") as f:
                     cfg.update(json.load(f))
             except Exception as e:
                 logger.warning("Error loading config: %s", e)
@@ -905,11 +912,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.config["defaultUser"] = self.default_user_input.text().strip()
         self.config["autoClipboardDetect"] = self.clipboard_chk.isChecked()
         self.config["themeSync"] = self.theme_sync_chk.isChecked()
+        if hasattr(self, "scale_combo"):
+            self.config["scaleFactor"] = float(self.scale_combo.currentData() or 1.0)
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=2)
+            # Also keep local config.json in sync if it exists or app directory differs
+            local_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            if local_cfg != CONFIG_FILE and os.path.isdir(os.path.dirname(local_cfg)):
+                try:
+                    with open(local_cfg, "w", encoding="utf-8") as f:
+                        json.dump(self.config, f, indent=2)
+                except Exception:
+                    pass
             self.api = DaemonApiClient(self.config["daemonUrl"])
-            self.show_toast("⚙️ Settings saved successfully!")
+            self.show_toast("⚙️ Settings saved! (Restart app to apply UI display scale)")
             self.sync_daemon_state()
             self.restart_websocket()
         except Exception as e:
@@ -1211,6 +1228,26 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("Jellyfin Web URL:", self.jellyfin_url_input)
         form.addRow("Local Music Folder:", self.folder_url_input)
         form.addRow("Default Jellyfin Account:", self.default_user_input)
+
+        # UI Scale Setting
+        self.scale_combo = QtWidgets.QComboBox()
+        self.scale_combo.addItem("Auto / System Default (1.0x)", 1.0)
+        self.scale_combo.addItem("125% Scale (1.25x)", 1.25)
+        self.scale_combo.addItem("150% Scale (1.5x - Recommended for 1080p/1440p)", 1.5)
+        self.scale_combo.addItem("175% Scale (1.75x)", 1.75)
+        self.scale_combo.addItem("200% Scale (2.0x - Recommended for 4K)", 2.0)
+        try:
+            curr_scale = float(self.config.get("scaleFactor", 1.0))
+        except Exception:
+            curr_scale = 1.0
+        idx = self.scale_combo.findData(curr_scale)
+        if idx >= 0:
+            self.scale_combo.setCurrentIndex(idx)
+        else:
+            self.scale_combo.addItem(f"Custom ({curr_scale}x)", curr_scale)
+            self.scale_combo.setCurrentIndex(self.scale_combo.count() - 1)
+        form.addRow("UI Display Scale:", self.scale_combo)
+
         layout.addLayout(form)
 
         # Options
@@ -1585,6 +1622,30 @@ class MainWindow(QtWidgets.QMainWindow):
 # ==============================================================================
 
 def main():
+    # 1. Enable Qt High-DPI automatic screen scaling before QApplication creation
+    if hasattr(QtCore.Qt, "AA_EnableHighDpiScaling"):
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(QtCore.Qt, "AA_UseHighDpiPixmaps"):
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
+
+    # 2. Check for optional scaleFactor in config.json if not overridden in environment
+    if "QT_SCALE_FACTOR" not in os.environ:
+        try:
+            cfg_candidates = [
+                os.path.expanduser("~/.config/omarchy/extensions/jellyfin-music-app/config.json"),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json"),
+            ]
+            for cp in cfg_candidates:
+                if os.path.exists(cp):
+                    with open(cp, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        sf = data.get("scaleFactor") or data.get("uiScale")
+                        if sf and float(sf) > 0 and float(sf) != 1.0:
+                            os.environ["QT_SCALE_FACTOR"] = str(sf)
+                            break
+        except Exception:
+            pass
+
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Jellyfin Music Downloader")
     window = MainWindow()
