@@ -633,8 +633,59 @@ async def test_downloader_real_process_manager_integration():
             if alt.exists() and alt.is_file():
                 actual_part = alt
         os.replace(actual_part, target_path)
-
         assert target_path.exists()
         assert target_path.read_bytes() == b"REAL_AUDIO_BYTES_TEST"
+
+
+@pytest.mark.asyncio
+async def test_downloader_falls_back_to_spotdl_on_failure(monkeypatch):
+    """Verify that when yt-dlp fails, Downloader automatically retries with spotdl."""
+    with tempfile.TemporaryDirectory() as td:
+        music_dir = Path(td)
+        pm = ProcessManager()
+        job_id = "job_spotdl_fallback"
+        await pm.register_job(job_id, "user1", "Single")
+
+        executed_cmds = []
+
+        async def mock_runner(cmd, job_id, cwd, temp_dir, in_flight_target, timeout):
+            executed_cmds.append(cmd)
+            if cmd[0] == "yt-dlp":
+                # Simulate yt-dlp bot challenge / extraction error
+                return 1, "", "ERROR: Sign in to confirm you're not a bot."
+            elif cmd[0] == "spotdl":
+                # Spotdl succeeds and writes file
+                temp_dir.write_bytes(b"SPOTDL_AUDIO_BYTES")
+                return 0, "Downloaded", ""
+            return 1, "", "Unknown engine"
+
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda cmd: "/usr/bin/spotdl" if cmd == "spotdl" else "/usr/bin/yt-dlp")
+
+        downloader = Downloader(
+            music_dir=music_dir,
+            process_manager=pm,
+            engine=DownloadEngine.AUTO,
+            max_retries=1,
+            command_runner=mock_runner,
+        )
+
+        track = DownloadTrack(
+            id="t_fallback",
+            title="OUTTHEWAY",
+            artist="Guy Arthur",
+            album="Single",
+            track_number=1,
+            disc_number=1,
+        )
+
+        res = await downloader.download_single_track(track, job_id)
+
+        assert res.success is True
+        assert len(executed_cmds) == 2
+        assert executed_cmds[0][0] == "yt-dlp"
+        assert executed_cmds[1][0] == "spotdl"
+        assert "Guy Arthur - OUTTHEWAY" in executed_cmds[1]
+
 
 

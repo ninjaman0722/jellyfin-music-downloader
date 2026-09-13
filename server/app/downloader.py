@@ -201,19 +201,20 @@ class Downloader:
         self,
         track: DownloadTrack,
         part_path: Path,
+        engine: Optional[DownloadEngine] = None,
     ) -> List[str]:
         """Builds an optimized argv list (shell=False) for yt-dlp."""
-        engine = self.engine
-        if engine == DownloadEngine.AUTO:
+        selected_engine = engine or self.engine
+        if selected_engine == DownloadEngine.AUTO:
             if shutil.which("yt-dlp") is not None:
-                engine = DownloadEngine.YTDLP
+                selected_engine = DownloadEngine.YTDLP
             elif shutil.which("spotdl") is not None:
-                engine = DownloadEngine.SPOTDL
+                selected_engine = DownloadEngine.SPOTDL
             else:
-                engine = DownloadEngine.YTDLP
+                selected_engine = DownloadEngine.YTDLP
 
-        if engine == DownloadEngine.SPOTDL:
-            query = track.url if track.url else f"{track.artist} - {track.title}"
+        if selected_engine == DownloadEngine.SPOTDL:
+            query = f"{track.artist} - {track.title}"
             spotdl_output = f"{part_path.with_suffix('')}.{{output-ext}}"
             cmd = [
                 "spotdl",
@@ -332,13 +333,19 @@ class Downloader:
                 job.in_flight_targets.add(target_path)
 
         # 4. Build command and execute with retry loop
-        cmd = self.build_download_command(track, part_path)
+        current_engine = self.engine
         last_error = ""
 
         for attempt in range(1, self.max_retries + 2):
             # Check cancellation between retries
             if job and job.cancel_event.is_set():
                 break
+
+            # Fallback to spotdl on retry if available
+            if attempt > 1 and shutil.which("spotdl") is not None:
+                current_engine = DownloadEngine.SPOTDL
+
+            cmd = self.build_download_command(track, part_path, engine=current_engine)
 
             try:
                 t0 = time.time()
