@@ -88,6 +88,7 @@ class ResolveTrack(BaseModel):
     exists_locally: bool = False
     local_path: Optional[str] = None
     source_playlist_name: Optional[str] = None
+    url: Optional[str] = None
 
 
 class ResolveRequest(BaseModel):
