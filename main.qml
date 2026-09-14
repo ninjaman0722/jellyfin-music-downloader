@@ -260,7 +260,7 @@ PanelWindow {
                 IngestView {
                     id: ingestView
                     theme: theme; usersList: root.usersList; selectedUserId: root.selectedUserId
-                    analysisData: root.analysisData; appState: root.appState
+                    analysisData: root.analysisData; appState: root.appState; onResetRequested: function() { root.analysisData = null; }
                     onUserSelected: function(uid) { root.selectedUserId = uid; }
                     onAnalyzeRequested: function(urls, mode) { root.triggerAnalysis(urls, mode); }
                     onIngestRequested: function(urls, plName, bitrate, lrc, cov, mode) { root.startIngestion(urls, plName, bitrate, lrc, cov, mode); }

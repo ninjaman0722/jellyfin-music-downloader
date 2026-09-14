@@ -16,6 +16,7 @@ Item {
     signal userSelected(string userId)
     signal analyzeRequested(var urls, string artistMode)
     signal ingestRequested(var urls, string playlistName, string bitrate, bool embedLyrics, bool embedCover, string artistMode)
+    signal resetRequested()
 
     function appendUrl(u) {
         var clean = u.trim();
@@ -90,7 +91,9 @@ Item {
                     font.pixelSize: 12
                     wrapMode: TextEdit.WrapAnywhere
                     onTextChanged: {
-                        view.analysisData = null;
+                        if (view.analysisData !== null) {
+                            view.resetRequested();
+                        }
                     }
                 }
             }
@@ -157,7 +160,7 @@ Item {
                     enabled: (urlInput.text && urlInput.text.trim().length > 0) || view.analysisData !== null
                     onClicked: {
                         urlInput.text = "";
-                        view.analysisData = null;
+                        view.resetRequested();
                     }
                 }
 
