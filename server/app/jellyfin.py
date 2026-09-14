@@ -615,6 +615,50 @@ class JellyfinClient:
 
         raise JellyfinNotFoundError("No music virtual folder found and fallback_global is False")
 
+    async def wait_for_library_scan(
+        self,
+        max_wait: float = 60.0,
+        poll_interval: float = 2.0,
+    ) -> bool:
+        """Waits until Jellyfin's media library scan finishes.
+
+        Polls GET /ScheduledTasks and checks the task with Key == 'RefreshLibrary'
+        or Name == 'Scan Media Library'. If State is 'Running', it polls until State
+        transitions back to 'Idle', or until max_wait seconds have elapsed.
+        Returns True if idle, False if timed out.
+        """
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
+        # Brief initial pause to let Jellyfin transition task state if recently triggered
+        await asyncio.sleep(1.0)
+
+        while (loop.time() - start_time) < max_wait:
+            try:
+                resp = await self._request("GET", "/ScheduledTasks")
+                tasks = resp.json()
+                scan_task = next(
+                    (t for t in tasks if t.get("Key") == "RefreshLibrary" or "Scan" in t.get("Name", "")),
+                    None,
+                )
+                if not scan_task:
+                    logger.debug("Scan Media Library task not found in /ScheduledTasks; assuming idle.")
+                    return True
+
+                state = scan_task.get("State", "Idle")
+                if state != "Running":
+                    logger.info("Jellyfin media library scan is idle (State=%s).", state)
+                    return True
+
+                pct = scan_task.get("CurrentProgressPercentage", 0)
+                logger.info("Waiting for Jellyfin library scan to finish... (Progress: %.1f%%)", pct or 0.0)
+            except Exception as e:
+                logger.warning("Error checking Jellyfin scan task status: %s", e)
+
+            await asyncio.sleep(poll_interval)
+
+        logger.warning("Timed out after %.1fs waiting for Jellyfin library scan to finish.", max_wait)
+        return False
+
     # ==========================================================================
     # Playlist Management & Scoped Creation
     # ==========================================================================

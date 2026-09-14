@@ -89,6 +89,9 @@ Item {
                     color: theme.foreground
                     font.pixelSize: 12
                     wrapMode: TextEdit.WrapAnywhere
+                    onTextChanged: {
+                        view.analysisData = null;
+                    }
                 }
             }
 
@@ -147,6 +150,15 @@ Item {
                     text: "🔍 Pre-Flight Diff Check"
                     enabled: view.getUrls().length > 0 && view.appState !== "analyzing"
                     onClicked: view.analyzeRequested(view.getUrls(), plPicker.artistMode)
+                }
+
+                Button {
+                    text: "✕ Reset"
+                    enabled: (urlInput.text && urlInput.text.trim().length > 0) || view.analysisData !== null
+                    onClicked: {
+                        urlInput.text = "";
+                        view.analysisData = null;
+                    }
                 }
 
                 Item { Layout.fillWidth: true }

@@ -108,7 +108,10 @@ PanelWindow {
             var j = Object.assign({}, root.activeJob);
             j.job_id = res.job_id;
             root.activeJob = j;
-            toast.show("Job queued successfully", "success");
+            var msg = "Job queued successfully";
+            if (res.queue_position > 1) msg += " (#" + res.queue_position + " in queue)";
+            if (res.rejected_duplicates && res.rejected_duplicates.length > 0) msg += " (" + res.rejected_duplicates.length + " duplicates rejected)";
+            toast.show(msg, "success");
         }, function(err) {
             root.appState = "error";
             toast.show("Failed to queue ingest: " + err, "error");

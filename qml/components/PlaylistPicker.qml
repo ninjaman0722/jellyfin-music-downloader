@@ -62,7 +62,18 @@ ColumnLayout {
     }
 
     readonly property bool isPlaylistMode: comp.truePlaylistUrlCount > 0
-    readonly property bool requiresUser: comp.isPlaylistMode || comp.mode === "existing" || comp.mode === "new"
+    readonly property bool requiresUser: comp.mode === "auto" || comp.mode === "existing" || comp.mode === "new"
+
+    onPlaylistUrlCountChanged: {
+        if (comp.playlistUrlCount > 0 && comp.mode === "none") {
+            comp.mode = "auto";
+        }
+    }
+    onTrackUrlCountChanged: {
+        if (comp.playlistUrlCount === 0 && comp.mode === "auto") {
+            comp.mode = "none";
+        }
+    }
 
     readonly property var activeUserObj: {
         if (!comp.users || !comp.users.length) return null;
@@ -86,9 +97,9 @@ ColumnLayout {
         return names;
     }
 
-    // Dynamic reactive resolved playlist name for loose songs
+    // Dynamic reactive resolved playlist destination
     readonly property string resolvedPlaylistName: {
-        if (comp.truePlaylistUrlCount > 0) {
+        if (comp.playlistUrlCount > 0 && comp.mode === "auto") {
             return "AUTO";
         }
         if (comp.mode === "existing") {
@@ -107,41 +118,52 @@ ColumnLayout {
 
         Text {
             text: {
-                if (comp.trackUrlCount > 0) {
-                    return comp.trackUrlCount === 1 ? "Destination for 1 loose song:" : ("Destination for " + comp.trackUrlCount + " loose songs:")
+                if (comp.playlistUrlCount > 0) {
+                    if (comp.mode === "auto") {
+                        if (comp.playlistUrlCount === 1) {
+                            return comp.detectedPlaylistName
+                                ? ("Playlist: 🎵 \"" + comp.detectedPlaylistName + "\" (Auto-Sync)")
+                                : "Playlist: 🎵 Auto-syncing from link";
+                        } else {
+                            return "🎵 " + comp.playlistUrlCount + " Playlists: Each will auto-create its own Jellyfin playlist";
+                        }
+                    } else if (comp.mode === "existing") {
+                        return "Playlist Destination: Merge into existing playlist";
+                    } else if (comp.mode === "new") {
+                        return "Playlist Destination: Custom new playlist";
+                    } else {
+                        return "Playlist Destination: Library only (no playlist)";
+                    }
+                } else if (comp.trackUrlCount > 0) {
+                    return comp.trackUrlCount === 1 ? "Destination for 1 loose song:" : ("Destination for " + comp.trackUrlCount + " loose songs:");
                 } else if (comp.hasArtistUrl) {
                     return comp.artistMode === "discography"
                         ? "🎤 Artist: Downloading full discography to server library"
-                        : "🎤 Artist: Downloading popular top tracks to server library"
+                        : "🎤 Artist: Downloading popular top tracks to server library";
                 } else if (comp.hasAlbumUrl) {
-                    return "💿 Album: Downloading full album to server library"
-                } else if (comp.playlistUrlCount > 1) {
-                    return "🎵 " + comp.playlistUrlCount + " Playlists: Each will auto-create its own Jellyfin playlist"
-                } else if (comp.playlistUrlCount === 1) {
-                    return comp.detectedPlaylistName
-                        ? ("Playlist: 🎵 \"" + comp.detectedPlaylistName + "\" (Auto-Sync)")
-                        : "Playlist: 🎵 Auto-syncing from link"
+                    return "💿 Album: Downloading full album to server library";
                 } else {
-                    return "Ready for music links (albums, artists, playlists, tracks)..."
+                    return "Ready for music links (albums, artists, playlists, tracks)...";
                 }
             }
             font.bold: true
             font.pixelSize: 12
-            color: (comp.trackUrlCount > 0 || comp.hasArtistUrl || comp.hasAlbumUrl) ? theme.bright_foreground : theme.accent
+            color: (comp.hasUrls) ? theme.bright_foreground : theme.accent
         }
 
         Item { Layout.fillWidth: true }
 
-        // Mode Radio Buttons: ONLY shown when there are loose songs needing destination routing!
+        // Mode Radio Buttons: shown when playlists OR loose tracks are present
         RowLayout {
-            visible: comp.trackUrlCount > 0
+            visible: comp.playlistUrlCount > 0 || comp.trackUrlCount > 0
             spacing: 6
 
             RadioButton {
-                text: "Library Only"
-                checked: comp.mode === "none"
+                visible: comp.playlistUrlCount > 0
+                text: "Auto-Sync"
+                checked: comp.mode === "auto"
                 font.pixelSize: 11
-                onClicked: comp.mode = "none"
+                onClicked: comp.mode = "auto"
             }
             RadioButton {
                 text: comp.availablePlaylistNames.length > 0 ? ("Existing (" + comp.availablePlaylistNames.length + ")") : "Existing Playlist"
@@ -155,6 +177,12 @@ ColumnLayout {
                 checked: comp.mode === "new"
                 font.pixelSize: 11
                 onClicked: comp.mode = "new"
+            }
+            RadioButton {
+                text: "Library Only"
+                checked: comp.mode === "none"
+                font.pixelSize: 11
+                onClicked: comp.mode = "none"
             }
         }
     }
@@ -192,21 +220,23 @@ ColumnLayout {
     // Subtitle note when both playlists AND loose songs are present
     Text {
         visible: comp.playlistUrlCount > 0 && comp.trackUrlCount > 0
-        text: "🎵 " + comp.playlistUrlCount + (comp.playlistUrlCount === 1 ? " playlist" : " playlists") + " in queue will automatically create " + (comp.playlistUrlCount === 1 ? "its own playlist." : "their own separate playlists.")
+        text: comp.mode === "auto"
+            ? ("🎵 " + comp.playlistUrlCount + " playlist(s) and " + comp.trackUrlCount + " loose song(s). Playlists auto-sync, loose songs route to library.")
+            : ("🎵 All " + (comp.playlistUrlCount + comp.trackUrlCount) + " item(s) will route to selected destination.")
         font.pixelSize: 11
         color: theme.cyan
     }
 
     // Informational note for loose songs, albums, and artist discography
     Text {
-        visible: (comp.trackUrlCount > 0 && comp.mode === "none") || comp.hasAlbumUrl || comp.hasArtistUrl
+        visible: comp.mode === "none" || comp.hasAlbumUrl || comp.hasArtistUrl
         text: comp.hasArtistUrl
             ? "ℹ️ Saves artist releases directly to /mnt/media/music/ for all Jellyfin users."
             : (comp.hasAlbumUrl
                 ? "ℹ️ Saves album directly to /mnt/media/music/ for all Jellyfin users."
                 : (comp.trackUrlCount === 1
                     ? "ℹ️ Saves 1 song directly to your Jellyfin library without a playlist."
-                    : ("ℹ️ Saves " + comp.trackUrlCount + " songs directly to your Jellyfin library without a playlist.")))
+                    : "ℹ️ Ingests audio directly into server-wide Jellyfin library without creating a playlist."))
         font.pixelSize: 11
         color: theme.light_foreground
         font.italic: true
@@ -214,15 +244,15 @@ ColumnLayout {
 
     ComboBox {
         id: plCombo
-        visible: comp.trackUrlCount > 0 && comp.mode === "existing"
+        visible: (comp.playlistUrlCount > 0 || comp.trackUrlCount > 0) && comp.mode === "existing"
         Layout.fillWidth: true
         model: comp.availablePlaylistNames
     }
 
     TextField {
         id: newPlInput
-        visible: comp.trackUrlCount > 0 && comp.mode === "new"
+        visible: (comp.playlistUrlCount > 0 || comp.trackUrlCount > 0) && comp.mode === "new"
         Layout.fillWidth: true
-        placeholderText: "Enter playlist name for loose songs..."
+        placeholderText: comp.playlistUrlCount > 0 ? "Enter target playlist name..." : "Enter playlist name for loose songs..."
     }
 }

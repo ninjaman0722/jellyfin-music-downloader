@@ -624,3 +624,31 @@ def test_zero_sqlite_or_xml_disk_access():
     assert "jellyfin.db" not in content, "Forbidden 'jellyfin.db' found in jellyfin.py!"
     assert "playlist.xml" not in content, "Forbidden 'playlist.xml' found in jellyfin.py!"
     assert "api_key=" not in content, "Forbidden 'api_key=' in query params found in jellyfin.py!"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_library_scan_detects_completion(respx_mock, jellyfin_client: JellyfinClient):
+    """Verify wait_for_library_scan polls /ScheduledTasks until RefreshLibrary is Idle."""
+    # First poll: Running, second poll: Idle
+    task_running = [{"Key": "RefreshLibrary", "Name": "Scan Media Library", "State": "Running"}]
+    task_idle = [{"Key": "RefreshLibrary", "Name": "Scan Media Library", "State": "Idle"}]
+
+    route = respx_mock.get(path="/ScheduledTasks")
+    route.side_effect = [
+        httpx.Response(200, json=task_running),
+        httpx.Response(200, json=task_idle),
+    ]
+
+    completed = await jellyfin_client.wait_for_library_scan(max_wait=5.0, poll_interval=0.05)
+    assert completed is True
+    assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_wait_for_library_scan_handles_errors_gracefully(respx_mock, jellyfin_client: JellyfinClient):
+    """Verify wait_for_library_scan returns False gracefully if ScheduledTasks endpoint errors."""
+    respx_mock.get(path="/ScheduledTasks").respond(500, text="Internal Server Error")
+
+    completed = await jellyfin_client.wait_for_library_scan(max_wait=1.0, poll_interval=0.05)
+    assert completed is False
+

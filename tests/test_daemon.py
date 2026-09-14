@@ -736,4 +736,80 @@ async def test_ingest_pipeline_stage3_enriches_album_from_lrclib(
         test_app.state.jellyfin = orig_jf
 
 
+@pytest.mark.asyncio
+async def test_ingest_queue_ordering_and_duplicate_filtering(
+    async_client: httpx.AsyncClient,
+    test_app: FastAPI,
+):
+    """Verify FIFO queue ordering, duplicate URL rejection across users, and queue cancellation."""
+    from server.app.main import IngestionQueue, QueueItem
+    queue: IngestionQueue = getattr(test_app.state, "queue", None)
+    if not queue:
+        queue = IngestionQueue(ws_manager=getattr(test_app.state, "ws_manager", None))
+        test_app.state.queue = queue
+
+    # Clear any previous queue state
+    while not queue._queue.empty():
+        try:
+            queue._queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+    queue._active_item = None
+    queue._items.clear()
+
+    # 1. Enqueue Job 1 (Kendon)
+    resp1 = await async_client.post(
+        "/api/ingest",
+        json={
+            "urls": ["https://music.youtube.com/watch?v=track1", "https://music.youtube.com/watch?v=track2"],
+            "user_id": "user-kendon",
+            "playlist_name": "Playlist 1",
+        },
+    )
+    assert resp1.status_code == 202
+    data1 = resp1.json()
+    assert data1["queue_position"] == 1
+    assert data1["rejected_duplicates"] == []
+    job1_id = data1["job_id"]
+
+    # 2. Enqueue Job 2 (Tennison) with 1 duplicate and 1 unique track
+    resp2 = await async_client.post(
+        "/api/ingest",
+        json={
+            "urls": ["https://music.youtube.com/watch?v=track2", "https://music.youtube.com/watch?v=track3"],
+            "user_id": "user-tennison",
+            "playlist_name": "Playlist 2",
+        },
+    )
+    assert resp2.status_code == 202
+    data2 = resp2.json()
+    assert data2["queue_position"] == 2
+    assert "https://music.youtube.com/watch?v=track2" in data2["rejected_duplicates"]
+    job2_id = data2["job_id"]
+
+    # 3. Enqueue Job 3 with ONLY duplicates - must be rejected with 409 Conflict
+    resp3 = await async_client.post(
+        "/api/ingest",
+        json={
+            "urls": ["https://music.youtube.com/watch?v=track1"],
+            "user_id": "user-kendon",
+            "playlist_name": "Playlist 1 Retry",
+        },
+    )
+    assert resp3.status_code == 409
+    assert "in the queue" in resp3.json()["detail"]
+
+    # 4. Check GET /api/queue
+    q_resp = await async_client.get("/api/queue")
+    assert q_resp.status_code == 200
+    q_data = q_resp.json()
+    assert q_data["total_queued"] >= 1
+
+    # 5. Cancel Job 2 from queue
+    cancel_resp = await async_client.post("/api/cancel", json={"job_id": job2_id})
+    assert cancel_resp.status_code == 200
+    assert not queue.has_job(job2_id)
+
+
+
 
