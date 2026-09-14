@@ -159,7 +159,7 @@ Item {
                 clip: true
                 onCountChanged: logListView.positionViewAtEnd()
                 delegate: Text {
-                    width: parent.width
+                    width: logListView ? logListView.width : 0
                     text: "[" + model.time + "] " + model.message
                     font.family: "JetBrains Mono, monospace"
                     font.pixelSize: 10
