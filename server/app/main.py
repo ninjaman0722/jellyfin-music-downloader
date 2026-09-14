@@ -46,7 +46,7 @@ from server.app.jellyfin import (
     JellyfinPermissionError,
     JellyfinServerError,
 )
-from server.app.indexer import LibraryIndex, index_library
+from server.app.indexer import LibraryIndex, index_library, normalize_key
 from server.app.logger import log_broadcaster_worker, setup_logging
 from server.app.lyrics import LRCLIBClient
 from server.app.process import ProcessManager
@@ -860,6 +860,15 @@ async def execute_ingestion_pipeline(app: FastAPI, job_id: str, req: IngestReque
                     for pl_name, grp_tracks in playlist_groups.items():
                         if not grp_tracks:
                             continue
+                        # Deduplicate tracks by normalized (title, artist) to prevent duplicate playlist entries
+                        deduped_tracks = []
+                        seen_track_keys = set()
+                        for tr in grp_tracks:
+                            k = (normalize_key(tr.get("title", "")), normalize_key(tr.get("artist", "")))
+                            if k not in seen_track_keys:
+                                seen_track_keys.add(k)
+                                deduped_tracks.append(tr)
+                        grp_tracks = deduped_tracks
                         logger.info("[%s] Resolving %d track Item IDs in Jellyfin for playlist '%s'...", job_id, len(grp_tracks), pl_name)
                         item_ids = await jellyfin.resolve_track_item_ids(
                             user_id=(req.user_id or req.target_user_id),

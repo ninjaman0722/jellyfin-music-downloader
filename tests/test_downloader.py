@@ -836,5 +836,23 @@ async def test_downloader_spotdl_mismatched_song_rejected_and_falls_back(monkeyp
         assert res.path.read_bytes() == b"YTDLP_CORRECT_AUDIO_BYTES"
 
 
+def test_build_download_command_ytdlp_spotify_url_searches_youtube():
+    """Verify build_download_command for yt-dlp converts Spotify URL to a YouTube search query."""
+    pm = ProcessManager()
+    dl = Downloader(music_dir="/music", process_manager=pm, format_ext=".mp3", engine=DownloadEngine.YTDLP)
+    track = DownloadTrack(
+        id="sp_track_01",
+        title="Payphone",
+        artist="Maroon 5",
+        album="Overexposed",
+        url="https://open.spotify.com/track/4immv9Yx7U2F8sH6w9Wb9S",
+    )
+    part = dl.get_part_path(Path("/music/Maroon 5/Overexposed/01 - Payphone.mp3"))
+    cmd = dl.build_download_command(track, part)
+    assert cmd[0] == "yt-dlp"
+    assert "https://open.spotify.com" not in cmd
+    assert "ytsearch5:Maroon 5 - Payphone audio" in cmd
+    assert "--max-downloads" in cmd
+    assert cmd[cmd.index("--max-downloads") + 1] == "1"
 
 

@@ -249,7 +249,17 @@ class Downloader:
             return cmd
 
         # High-performance yt-dlp zero-copy configuration
-        target_query = track.url if track.url else f"ytsearch1:{track.artist} - {track.title} audio"
+        is_search = False
+        if track.url and ("youtube.com" in track.url or "youtu.be" in track.url):
+            target_query = track.url
+        elif track.artist and track.title:
+            target_query = f"ytsearch5:{track.artist} - {track.title} audio"
+            is_search = True
+        elif track.url and not any(d in track.url for d in ("spotify.com", "music.apple.com", "amazon.")):
+            target_query = track.url
+        else:
+            target_query = f"ytsearch5:{track.artist} {track.title}".strip() if (track.artist or track.title) else (track.url or "")
+            is_search = bool(track.artist or track.title)
         fmt = self.format_ext.lstrip(".")
         cmd = [
             "yt-dlp",
@@ -266,6 +276,8 @@ class Downloader:
             "--no-cache-dir",
             "-o", str(part_path),
         ]
+        if is_search:
+            cmd.extend(["--max-downloads", "1"])
         if self.sponsorblock:
             cmd.extend(["--sponsorblock-remove", "all"])
         return cmd
@@ -392,7 +404,8 @@ class Downloader:
                     target_path=target_path,
                 )
 
-                if rc == 0:
+                # yt-dlp returns 101 when --max-downloads is reached, indicating complete download
+                if rc == 0 or (current_engine == DownloadEngine.YTDLP and rc == 101):
                     # 5. Integrity Verification: check that .part exists and is non-empty regular file
                     # SpotDL strips leading dots from filenames (.part_ -> part_), so check both variants
                     actual_part = part_path
